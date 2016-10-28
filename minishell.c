@@ -170,14 +170,6 @@ void  readCommand(char * inputString) {
 
 }
 
-/**
- * Convert a string into an array by using the delimeter to split
- * the tokens in the string apart.
- * @param *theString : The string to be converted into the array
- * @param max_len : The maximum cells the array is allowed to have
- * @param *delim: The delimeter used in splitting the path.
- * @param **theArray : The vector the string tokens will be stored.
- */
 void stringToArray(char * theString, int max_len, char* delim, char ** theArray)
 {
       //Tokenize first element, store in array     
@@ -191,8 +183,8 @@ void stringToArray(char * theString, int max_len, char* delim, char ** theArray)
 void createRunProc(struct command_t * command, char * envp[])
 {
       int child_pid;                // Child process PID
-      int stat;               // used by parent wait
-      pid_t thisChPID;        // This process's PID
+      int stat;                     // used by parent wait
+      pid_t thisChPID;              // This process's PID
       short runBackground = FALSE;
       
       thisChPID = fork();
