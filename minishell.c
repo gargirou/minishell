@@ -7,27 +7,22 @@
 #include    <unistd.h>
 #include    "minishell.h"
 
-char  *lookupPath(char **, char **);
-int   parseCommand(char *, struct command_t *);
-void  parsePath(char **);
-void  printPrompt();
-void  readCommand(char *);
-void  initShell(struct command_t *);
-void  stringToArray(char * theString, int max_len, char* delim, char ** theArray);
-void createRunProc(struct command_t *, char **);
+int main(int argc, char *argv[], char *envp[])
+{       
+      startShell(envp);
+      return 0;
+}
 
-char *promptString = "mini shell $";
-
-int main(int argc, char *argv[], char *envp[]) {
-      // few allocation hints
+int startShell(char *envp[]) {
       char commandLine[LINE_LEN];
       char *pathv[MAX_PATHS];
       int child_pid;
       int stat;
       pid_t thisChPID;
-      struct command_t command;
+      prompt_s prompt;
+      command_s command;
 
-      initShell(&command);    // Shell initialization
+      initShell(&prompt, &command);    // Shell initialization
 
       // get all directories from PATH env var
       parsePath(pathv);
@@ -35,14 +30,14 @@ int main(int argc, char *argv[], char *envp[]) {
       // Main loop
       while(TRUE) {
             // Read the command line
-            printPrompt();
+            printPrompt(&prompt);
             readCommand(commandLine);
             // Quit the shell ?
             if( (strcmp(commandLine, "exit") == 0) ||
                 (strcmp(commandLine, "quit") == 0) )
                   break;
             // Parse the command line
-            command.argc = parseCommand(commandLine, &command);
+            command.argc = stringToArray(commandLine, MAX_ARGS, WHITESPACE, command.argv);
             // child process  pid
             // used by parent wait
       
@@ -76,9 +71,13 @@ int main(int argc, char *argv[], char *envp[]) {
       }
       printf("Terminating Mini Shell\n");
       // Shell termination
+      return 0;
 }
 
-void initShell(struct command_t * command) {
+void initShell(prompt_s * prompt, command_s * command) {
+      prompt->shell = shellName;
+      prompt->cwd = (lastIndexOf(getenv("PWD"), '/'))+1;
+      prompt->user = getenv("USER");
       for(int i=0; i < MAX_ARGS; i++) {
             command->argv[i] = (char *) malloc(MAX_ARG_LEN);
       }
@@ -88,22 +87,21 @@ char *lookupPath(char ** argv, char ** dirs) {
 
       char * result = (char *)malloc(MAX_PATH_LEN);   //To store command location
       char * command = (char *)malloc(LINE_LEN);      //To store the command
-      int fileExists;                           //Set if file exists
+      int fileExists;                                 //Set if file exists
       
       //Command is the the user's command from the first argument
       command = strcpy(command, argv[0]);
       
       // if absolute path (/) or relative path (. , ..)
-      if( command[0] == '/' || command[0] == '.' )
+      if((command[0] == '/' || command[0] == '.') && (fileExists = access(command, F_OK)))
       {
-            fileExists = access(command, F_OK); //Determines if file exits
             result = strcpy(result, argv[0]);   
       }
       else
       {     //Search the path for the file.
             //Attach paths to command until file is found
             //or not found. 
-            short dirIndex = 0; 
+            int dirIndex = 0; 
             do
             {     //Copy and concat onto the result string the 
                   //absolute paths and command.
@@ -127,17 +125,7 @@ char *lookupPath(char ** argv, char ** dirs) {
             return argv[0] = NULL;
       }
 }
-int   parseCommand(char * commandLine, struct command_t * command) {
-      int argIndex = 0;
-      //With string tokenizer, store the first token in first index.
-      command->argv[argIndex++] = strtok(commandLine, WHITESPACE);
-      
-      //Store the rest of the tokens in the other indicies
-      while(argIndex < MAX_ARGS && (command->argv[argIndex++] = strtok(NULL, WHITESPACE)) != NULL)
-            ;
 
-      return argIndex-1;
-}
 void  parsePath(char ** pathv) {
       //Pointer to PATH environment variable
       char * thePath;
@@ -159,9 +147,24 @@ void  parsePath(char ** pathv) {
                   printf("%s\n", pathv[i]);
       }     
 }
-void  printPrompt() {
-      printf("%s ", promptString);
+
+void  printPrompt(prompt_s *prompt) {
+      printf("%s %s:%s$ ", prompt->shell, prompt->user, prompt->cwd);
 }
+
+int   parseCommand(char * commandLine, command_s * command) {
+      int argIndex = 0;
+      //With string tokenizer, store the first token in first index.
+      command->argv[argIndex++] = strtok(commandLine, WHITESPACE);
+      
+      //Store the rest of the tokens in the other indicies
+      while(argIndex < MAX_ARGS && (command->argv[argIndex++] = strtok(NULL, WHITESPACE)) != NULL)
+            ;
+
+      return argIndex-1;
+}
+
+
 void  readCommand(char * inputString) {
       if((scanf(" %[^\n]", inputString)) <= 0) {
             perror("Invalid string was read\n");
@@ -170,17 +173,21 @@ void  readCommand(char * inputString) {
 
 }
 
-void stringToArray(char * theString, int max_len, char* delim, char ** theArray)
+int stringToArray(char * theString, int max_len, char* delim, char ** theArray)
 {
+      int arrayIndex = 0;
       //Tokenize first element, store in array     
-      theArray[0] = strtok(theString, delim);
+      theArray[arrayIndex++] = strtok(theString, delim);
         
       //Tokenize the rest of the elements
-        for(int i=1; theArray[i-1] != NULL && i < max_len; i++)
-            theArray[i] = strtok(NULL, delim);
+      while(arrayIndex < max_len && (theArray[arrayIndex++] = strtok(NULL, delim)) != NULL)
+            ;
+        // for(int i=1; theArray[i-1] != NULL && i < max_len; i++)
+        //     theArray[i] = strtok(NULL, delim);
+      return arrayIndex-1;
 }
 
-void createRunProc(struct command_t * command, char * envp[])
+void createRunProc(command_s * command, char * envp[])
 {
       int child_pid;                // Child process PID
       int stat;                     // used by parent wait
@@ -218,4 +225,16 @@ void createRunProc(struct command_t * command, char * envp[])
             //    printf("Process terminated irregularly");
       }      
 
+}
+
+char * lastIndexOf(char * phrase, char key) {
+      char * location = NULL;
+
+      do {
+            if(*phrase == key){
+                  location = phrase;
+            }          
+      }while(*(++phrase));
+
+      return location;
 }
