@@ -132,12 +132,8 @@ int prepareCommandForExecution(char * commandLine, command_s * command, char ** 
 
 char *lookupPath(char * argv, char ** dirs) {
 
-      char * command = (char *)malloc(LINE_LEN);      //To store the command
-      char * result = (char *)malloc(MAX_PATH_LEN);   //To store command location
+      char * result = (char *)malloc(LINE_LEN);   //To store command location
       int fileExists;                                 //Set if file exists
-      
-      //Command is the the user's command from the first argument
-      strcpy(command, argv);
       
       // if absolute path (/) or relative path (. , ..)
       if((argv[0] == '/' || argv[0] == '.') && (fileExists = access(argv, F_OK))) {
@@ -152,22 +148,16 @@ char *lookupPath(char * argv, char ** dirs) {
             //absolute paths and command.
             strcpy(result, dirs[dirIndex]);
             strcat(result, "/");
-            strcat(result, command);
+            strcat(result, argv);
             fileExists = access(result, F_OK); //Exists?
             dirIndex++;
       }while(dirs[dirIndex] != NULL && fileExists != 0);
       
-      //Set the fist argument to the full path of command
-      argv = result;
-
-      free(command);
-      free(result);
-      result = NULL;
-
+      //If the file exists, return the string 
       if(fileExists == 0) {
-            return argv;
+            return result;
       } else {
-            return argv = NULL;
+            return result = NULL;
       }
 }
 
