@@ -6,7 +6,7 @@
 #define MAX_ARG_LEN 64
 #define MAX_PATHS 64
 #define MAX_PATH_LEN 96
-#define WHITESPACE " .,\t&"
+#define WHITESPACE " .,\t"
 #define STD_INPUT 0
 #define STD_OUTPUT 1
 #define NON_LETHAL_ERROR 0
@@ -31,7 +31,7 @@ typedef struct _prompt_s {
 //Main shell functions
 int   startShell(char **);
 int   prepareCommandForExecution(char *, command_s *, char **);
-char  *lookupPath(char *, char **);
+char  *lookupPath(char *, char *, char **);
 void  parsePath(char **);
 void  printPrompt(prompt_s *);
 void  readCommand(char *);
@@ -39,6 +39,7 @@ void  initShell(prompt_s *, command_s *);
 int   stringToArray(char *, int, char*, char **);
 void  createRunProc(command_s *, char **);
 char  *lastIndexOf(char *, char);
+void  deallocShellVars(command_s *);
 
 //Prompt strings
 char *shellName = "minsh";

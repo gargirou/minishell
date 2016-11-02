@@ -18,7 +18,7 @@ int startShell(char *envp[]) {
       char *pathv[MAX_PATHS];
       int child_pid;
       int stat;
-      pid_t thisChPID;
+      //pid_t thisChPID;
       prompt_s prompt;
       command_s command;
 
@@ -53,6 +53,7 @@ int startShell(char *envp[]) {
             //--- Fork, Exec, Wait process ---
             createRunProc(&command,  envp);
       }
+      deallocShellVars(&command);
       printf("Terminating Mini Shell\n");
       // Shell termination
       return 0;
@@ -64,9 +65,10 @@ void initShell(prompt_s * prompt, command_s * command) {
       prompt->cwd = (lastIndexOf(getenv("PWD"), '/'))+1;
       prompt->user = getenv("USER");
       //Command initialization
-      for(int i=0; i < MAX_ARGS; i++) {
-            command->argv[i] = (char *) malloc(MAX_ARG_LEN);
-      }
+      command->name = (char *) malloc(MAX_ARG_LEN);
+      // for(int i=0; i < MAX_ARGS; i++) {
+      //       command->argv[i] = (char *) malloc(MAX_ARG_LEN);
+      // }
 }
 
 void  parsePath(char ** pathv) {
@@ -107,7 +109,7 @@ int prepareCommandForExecution(char * commandLine, command_s * command, char ** 
       command->argc = stringToArray(commandLine, MAX_ARGS, WHITESPACE, command->argv);
 
       // Get the full path name
-      if((command->name = lookupPath(command->argv[0], pathv)) == NULL) {
+      if(lookupPath(command->name, command->argv[0], pathv) == NULL) {
             printf("Invalid command\n");  //Cannot find command
             return NON_LETHAL_ERROR;
       }
@@ -130,14 +132,14 @@ int prepareCommandForExecution(char * commandLine, command_s * command, char ** 
       return TRUE;
 }
 
-char *lookupPath(char * argv, char ** dirs) {
+char *lookupPath(char * name, char * argv, char ** dirs) {
 
-      char * result = (char *)malloc(LINE_LEN);   //To store command location
+      char * result = (char *)malloc(MAX_ARG_LEN);   //To store command location
       int fileExists;                                 //Set if file exists
       
       // if absolute path (/) or relative path (. , ..)
       if((argv[0] == '/' || argv[0] == '.') && (fileExists = access(argv, F_OK))) {
-            return argv;
+            return strcpy(name, argv);
       }
       //Search the path for the file.
       //Attach paths to command until file is found
@@ -152,12 +154,13 @@ char *lookupPath(char * argv, char ** dirs) {
             fileExists = access(result, F_OK); //Exists?
             dirIndex++;
       }while(dirs[dirIndex] != NULL && fileExists != 0);
-      
+      strcpy(name, result);
+      free(result);
       //If the file exists, return the string 
       if(fileExists == 0) {
-            return result;
+            return strcpy(name, result);
       } else {
-            return result = NULL;
+            return name = NULL;
       }
 }
 
@@ -166,44 +169,47 @@ void createRunProc(command_s * command, char * envp[])
       int child_pid;                // Child process PID
       int stat;                     // used by parent wait
       pid_t thisChPID;              // This process's PID
-      short runBackground = FALSE;
+      short runBackground = FALSE;  //CHANGE THIS: Implement in command structuer itself
       
       thisChPID = fork();
       
       
-      if(command->argc > 1 && strcmp(command->argv[command->argc-1],"&")==0 )
-      {     
+      if(command->argc > 1 && strcmp(command->argv[command->argc-1],"&")==0 ) {     
             //printf("& passed as back\n");
             command->argv[command->argc-1] = NULL;
             runBackground = TRUE;
       }     
-      if(thisChPID < 0) // Failed fork
-      {
-            printf("Error, failed to fork\n");
+ 
+      if(thisChPID < 0) {     // Failed fork
+            perror("Error, failed to fork command\n");
       }
-      else if(thisChPID == 0) // Child process
-      {
-            execve(command->name, command->argv, envp);
-            //if(runBackground == TRUE)
-                  //printf("DONE [%i]\n", thisChPID);
-      }
-      else  //Must be parent, wait for child
-      {
-            if(runBackground == FALSE)
+      else if(thisChPID == 0) {     // This is the child prcess. Execute command.
+            if(execve(command->name, command->argv, envp) == -1) {
+                  perror("Error, failed to execute command\n");
+            }
+      } else {    //Must be parent, wait for child
+            if(runBackground == FALSE) {
                   child_pid = wait(&stat);
-            else
-            {
+            } else {
                   printf("BG [%i]\n", thisChPID);
             }
-            //if(child_pid == -1)
-            //    printf("Process terminated irregularly");
       }      
 
 }
 
+void deallocShellVars(command_s * command) {
+      printf("name\n");
+      free(command->name);
+      // for(int i=0; i<command->argc; i++) {
+      //       printf("%i\n", i);
+      //       free(command->argv[i]);
+            
+      // }
+}
+
 char * lastIndexOf(char * phrase, char key) {
       char * location = NULL;
-
+      //We don't know the length, so we walk through the string from beginning to end
       do {
             if(*phrase == key){
                   location = phrase;
