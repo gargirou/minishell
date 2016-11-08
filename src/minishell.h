@@ -14,14 +14,6 @@
 #define NULL      0
 #endif
 
-#include    <fcntl.h>
-#include    <stdio.h>
-#include    <stdlib.h>
-#include    <sys/types.h>
-#include    <sys/wait.h>
-#include    <string.h>
-#include    <unistd.h>
-
 //Structure for shell command
 typedef struct _command_s {
 	char *name;

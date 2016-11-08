@@ -1,3 +1,10 @@
+#include    <fcntl.h>
+#include    <stdio.h>
+#include    <stdlib.h>
+#include    <sys/types.h>
+#include    <sys/wait.h>
+#include    <string.h>
+#include    <unistd.h>
 #include    "parse_functions.h"
 #include    "minishell.h"
 
