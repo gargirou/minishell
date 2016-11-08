@@ -7,12 +7,12 @@ ODIR=obj
 LIBS=-Wall -Werror
 
 _DEPS = minishell.h parse_functions.h
-DEPS = $(patsubst %,$(IDIR)/%,$(SDIR)/$(_DEPS))
+DEPS = $(patsubst %,$(IDIR)/$(SDIR)/%,$(_DEPS))
 
 _OBJ = minishell.o parse_functions.o
 OBJ = $(patsubst %,$(ODIR)/%,$(_OBJ))
 
-$(ODIR)/%.o : %.c $(DEPS)
+$(ODIR)/%.o : $(SDIR)/%.c $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 minishell: $(OBJ)

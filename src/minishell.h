@@ -6,13 +6,23 @@
 #define MAX_ARG_LEN 64
 #define MAX_PATHS 64
 #define MAX_PATH_LEN 96
-#define WHITESPACE " .,\t"
+#define MAX_COMMANDS 16
+#define WHITESPACE " \t"
+#define COMMAND_SEP ";"
 #define STD_INPUT 0
 #define STD_OUTPUT 1
 #define NON_LETHAL_ERROR 0
 #ifndef NULL
 #define NULL      0
 #endif
+
+#include    <fcntl.h>
+#include    <stdio.h>
+#include    <stdlib.h>
+#include    <sys/types.h>
+#include    <sys/wait.h>
+#include    <string.h>
+#include    <unistd.h>
 
 //Structure for shell command
 typedef struct _command_s {

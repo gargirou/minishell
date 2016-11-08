@@ -1,10 +1,3 @@
-#include    <fcntl.h>
-#include    <stdio.h>
-#include    <stdlib.h>
-#include    <sys/types.h>
-#include    <sys/wait.h>
-#include    <string.h>
-#include    <unistd.h>
 #include    "parse_functions.h"
 #include    "minishell.h"
 
@@ -201,34 +194,4 @@ void createRunProc(command_s * command, char * envp[])
 void deallocShellVars(command_s * command) {
       printf("name\n");
       free(command->name);
-      // for(int i=0; i<command->argc; i++) {
-      //       printf("%i\n", i);
-      //       free(command->argv[i]);
-            
-      // }
 }
-
-// char * lastIndexOf(char * phrase, char key) {
-//       char * location = NULL;
-//       //We don't know the length, so we walk through the string from beginning to end
-//       do {
-//             if(*phrase == key){
-//                   location = phrase;
-//             }          
-//       }while(*(++phrase));
-
-//       return location;
-// }
-
-// int stringToArray(char * theString, int max_len, char* delim, char ** theArray) {
-//       int arrayIndex = 0;
-//       //Tokenize first element, store in array     
-//       theArray[arrayIndex++] = strtok(theString, delim);
-        
-//       //Tokenize the rest of the elements
-//       while(arrayIndex < max_len && (theArray[arrayIndex++] = strtok(NULL, delim)) != NULL)
-//             ;
-//         // for(int i=1; theArray[i-1] != NULL && i < max_len; i++)
-//         //     theArray[i] = strtok(NULL, delim);
-//       return arrayIndex-1;
-// }

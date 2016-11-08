@@ -1,5 +1,3 @@
-#include <stdio.h>
-#include <string.h>
 #include "parse_functions.h"
 
 char * lastIndexOf(char * phrase, char key) {
