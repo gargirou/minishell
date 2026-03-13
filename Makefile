@@ -1,28 +1,27 @@
-IDIR=.
-CC=gcc
-CFLAGS=-std=c99
+CC      = gcc
+CFLAGS  = -std=gnu99 -Wall -Werror -Wextra
 
-SDIR=src
-ODIR=obj
-LIBS=-Wall -Werror
+SDIR = src
+ODIR = obj
 
-_DEPS = minishell.h parse_functions.h
-DEPS = $(patsubst %,$(IDIR)/$(SDIR)/%,$(_DEPS))
+SRCS = $(SDIR)/minishell.c \
+       $(SDIR)/parse.c     \
+       $(SDIR)/execute.c   \
+       $(SDIR)/builtins.c
 
-_OBJ = minishell.o parse_functions.o
-OBJ = $(patsubst %,$(ODIR)/%,$(_OBJ))
+OBJS = $(patsubst $(SDIR)/%.c,$(ODIR)/%.o,$(SRCS))
 
-$(ODIR)/%.o : $(SDIR)/%.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+DEPS = $(SDIR)/minishell.h
 
-minishell: $(OBJ)
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
+$(ODIR)/%.o: $(SDIR)/%.c $(DEPS)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+minishell: $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
 
 run: minishell
 	./minishell
 
 .PHONY: clean
-
 clean:
-	rm -f $(ODIR)/*.o *~ core $(IDIR)/*~
-
+	rm -f $(ODIR)/*.o minishell *~ core
