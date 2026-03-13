@@ -1,197 +1,171 @@
-#include    "parse_functions.h"
-#include    "minishell.h"
+#include "minishell.h"
+
+Shell  shell;
+char  *pathv[MAX_PATHS];
+
+static volatile int got_sigint = 0;
+
+void sigint_handler(int sig)
+{
+    (void)sig;
+    got_sigint = 1;
+    write(STDOUT_FILENO, "\n", 1);
+}
 
 int main(int argc, char *argv[], char *envp[])
-{       
-      startShell(envp);
-      return 0;
-}
-
-int startShell(char *envp[]) {
-      char commandLine[LINE_LEN];
-      char *pathv[MAX_PATHS];
-      int child_pid;
-      int stat;
-      //pid_t thisChPID;
-      prompt_s prompt;
-      command_s command;
-
-      initShell(&prompt, &command);    // Shell initialization
-
-      // get all directories from PATH env var
-      parsePath(pathv);
-
-      // Main loop
-      while(TRUE) {
-            // Print the prompt
-            printPrompt(&prompt);
-            // Read the command line
-            readCommand(commandLine);
-            // Quit the shell ?
-            if( (strcmp(commandLine, "exit") == 0) ||
-                (strcmp(commandLine, "quit") == 0) )
-                  break;
-            // Parse the command line
-            if(!prepareCommandForExecution(commandLine, &command, pathv)) {
-                  continue; //Non lethal error occured
-            }
-
-            // child process  pid
-            // used by parent wait
-
-            // create child process to execute the command
-            // (be careful with the pipes, you need to re-direct the
-            // output from the child to stdout to display the results)
-
-            // wait for the child to terminate
-            //--- Fork, Exec, Wait process ---
-            createRunProc(&command,  envp);
-      }
-      deallocShellVars(&command);
-      printf("Terminating Mini Shell\n");
-      // Shell termination
-      return 0;
-}
-
-void initShell(prompt_s * prompt, command_s * command) {
-      //Prompt initialization
-      prompt->shell = shellName;
-      prompt->cwd = (lastIndexOf(getenv("PWD"), '/'))+1;
-      prompt->user = getenv("USER");
-      //Command initialization
-      command->name = (char *) malloc(MAX_ARG_LEN);
-      // for(int i=0; i < MAX_ARGS; i++) {
-      //       command->argv[i] = (char *) malloc(MAX_ARG_LEN);
-      // }
-}
-
-void  parsePath(char ** pathv) {
-      //Pointer to PATH environment variable
-      char * thePath;
-        
-      //Point to the path
-      thePath = getenv("PATH");
-
-      // Initialize all locations in path to null before store
-      for(int i=0; i< MAX_PATHS; i++)
-            pathv[i] = NULL;
-      
-      //Tokenize the path and store each token in pathv
-      stringToArray(thePath,MAX_PATHS, ":", pathv);
-      
-      if(DEBUG){
-            //Print the contents of pathv after store
-            printf("PATH variable:\n");
-            for(int i=0; pathv[i] != NULL && i < MAX_PATHS; i++)
-                  printf("%s\n", pathv[i]);
-      }     
-}
-
-void  printPrompt(prompt_s *prompt) {
-      printf("%s %s:%s$ ", prompt->shell, prompt->user, prompt->cwd);
-}
-
-void  readCommand(char * inputString) {
-      if((scanf(" %[^\n]", inputString)) <= 0) {
-            perror("Invalid string was read\n");
-            inputString = NULL;
-      }
-}
-
-int prepareCommandForExecution(char * commandLine, command_s * command, char ** pathv) {
-      //Tokenize commandline into the command_S argument array
-      command->argc = stringToArray(commandLine, MAX_ARGS, WHITESPACE, command->argv);
-
-      // Get the full path name
-      if(lookupPath(command->name, command->argv[0], pathv) == NULL) {
-            printf("Invalid command\n");  //Cannot find command
-            return NON_LETHAL_ERROR;
-      }
-
-      // Display each parsed token
-      if(DEBUG) {
-            printf("ParseCommand: ");
-            for(int j=0; j<command->argc; j++)
-                  printf(" %s, ",command->argv[j]);
-            printf("\n");
-      }
-
-      //If file found is not executable
-      if(access(command->name, X_OK) != 0)
-      {
-            printf("The command \"%s\" is not executable\n", command->name);
-            return NON_LETHAL_ERROR;
-      }
-
-      return TRUE;
-}
-
-char *lookupPath(char * name, char * argv, char ** dirs) {
-
-      char * result = (char *)malloc(MAX_ARG_LEN);   //To store command location
-      int fileExists;                                 //Set if file exists
-      
-      // if absolute path (/) or relative path (. , ..)
-      if((argv[0] == '/' || argv[0] == '.') && (fileExists = access(argv, F_OK))) {
-            return strcpy(name, argv);
-      }
-      //Search the path for the file.
-      //Attach paths to command until file is found
-      //or not found.
-      int dirIndex = 0; 
-      do
-      {     //Copy and concat onto the result string the 
-            //absolute paths and command.
-            strcpy(result, dirs[dirIndex]);
-            strcat(result, "/");
-            strcat(result, argv);
-            fileExists = access(result, F_OK); //Exists?
-            dirIndex++;
-      }while(dirs[dirIndex] != NULL && fileExists != 0);
-      strcpy(name, result);
-      free(result);
-      //If the file exists, return the string 
-      if(fileExists == 0) {
-            return strcpy(name, result);
-      } else {
-            return name = NULL;
-      }
-}
-
-void createRunProc(command_s * command, char * envp[])
 {
-      int child_pid;                // Child process PID
-      int stat;                     // used by parent wait
-      pid_t thisChPID;              // This process's PID
-      short runBackground = FALSE;  //CHANGE THIS: Implement in command structuer itself
-      
-      thisChPID = fork();
-      
-      
-      if(command->argc > 1 && strcmp(command->argv[command->argc-1],"&")==0 ) {     
-            //printf("& passed as back\n");
-            command->argv[command->argc-1] = NULL;
-            runBackground = TRUE;
-      }     
- 
-      if(thisChPID < 0) {     // Failed fork
-            perror("Error, failed to fork command\n");
-      }
-      else if(thisChPID == 0) {     // This is the child prcess. Execute command.
-            if(execve(command->name, command->argv, envp) == -1) {
-                  perror("Error, failed to execute command\n");
-            }
-      } else {    //Must be parent, wait for child
-            if(runBackground == FALSE) {
-                  child_pid = wait(&stat);
-            } else {
-                  printf("BG [%i]\n", thisChPID);
-            }
-      }      
-
+    (void)argc;
+    (void)argv;
+    return startShell(envp);
 }
 
-void deallocShellVars(command_s * command) {
-      printf("name\n");
-      free(command->name);
+int startShell(char **envp)
+{
+    /* Signal handling: Ctrl+C prints newline, doesn't kill shell */
+    struct sigaction sa;
+    sa.sa_handler = sigint_handler;
+    sa.sa_flags   = 0;  /* Don't restart so fgets returns on SIGINT */
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+    signal(SIGQUIT, SIG_IGN);  /* Ignore Ctrl+\ */
+
+    initShell(envp);
+    parsePath();
+
+    while (1) {
+        printPrompt();
+        fflush(stdout);
+
+        char *line = readLine();
+        if (!line) {
+            /* Real EOF (Ctrl+D) */
+            printf("\n");
+            break;
+        }
+
+        /* If we got here due to SIGINT, line is empty - loop again */
+        if (got_sigint) { got_sigint = 0; free(line); continue; }
+
+        /* Strip trailing newline */
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';
+
+        /* Skip empty lines and comments */
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0' || *p == '#') { free(line); continue; }
+
+        /* Add to history */
+        if (shell.history_count < HISTORY_SIZE) {
+            strncpy(shell.history[shell.history_count], line, LINE_LEN - 1);
+            shell.history[shell.history_count][LINE_LEN - 1] = '\0';
+            shell.history_count++;
+        } else {
+            memmove(shell.history[0], shell.history[1],
+                    (HISTORY_SIZE - 1) * LINE_LEN);
+            strncpy(shell.history[HISTORY_SIZE - 1], line, LINE_LEN - 1);
+        }
+
+        /* Convenience: "quit" exits the shell */
+        if (strcmp(p, "quit") == 0) { free(line); break; }
+
+        /* Expand $VARIABLE and $? */
+        char *expanded = expandVariables(line);
+        free(line);
+        if (!expanded) continue;
+
+        /* Lex */
+        Token tokens[MAX_TOKENS];
+        int   token_count = lex(expanded, tokens, MAX_TOKENS);
+        free(expanded);
+        if (token_count == 0) continue;
+
+        /* Parse into pipelines */
+        Pipeline pipelines[MAX_PIPELINES];
+        int      num_pipelines = 0;
+        if (parseTokens(tokens, token_count, pipelines, &num_pipelines) < 0) {
+            freeTokens(tokens, token_count);
+            shell.last_status = 1;
+            continue;
+        }
+
+        /* Execute */
+        runPipelines(pipelines, num_pipelines);
+
+        /* Free lexed token strings */
+        freeTokens(tokens, token_count);
+    }
+
+    printf("Terminating Mini Shell\n");
+    return shell.last_status;
+}
+
+void initShell(char **envp)
+{
+    shell.envp         = envp;
+    shell.last_status  = 0;
+    shell.history_count = 0;
+
+    char *cwd = getcwd(NULL, 0);
+    if (cwd) {
+        strncpy(shell.cwd, cwd, MAX_PATH_LEN - 1);
+        shell.cwd[MAX_PATH_LEN - 1] = '\0';
+        free(cwd);
+    } else {
+        const char *pwd = getenv("PWD");
+        strncpy(shell.cwd, pwd ? pwd : "/", MAX_PATH_LEN - 1);
+    }
+
+    shell.user = getenv("USER");
+    if (!shell.user) shell.user = "user";
+}
+
+void printPrompt(void)
+{
+    /* Show only the trailing component of cwd */
+    const char *base = strrchr(shell.cwd, '/');
+    if (base && *(base + 1) != '\0')
+        base++;
+    else if (strcmp(shell.cwd, "/") == 0)
+        base = "/";
+    else
+        base = shell.cwd;
+
+    printf("minsh %s:%s$ ", shell.user, base);
+}
+
+char *readLine(void)
+{
+    char *buf = malloc(LINE_LEN);
+    if (!buf) return NULL;
+
+    clearerr(stdin);
+    if (fgets(buf, LINE_LEN, stdin) == NULL) {
+        free(buf);
+        if (feof(stdin)) return NULL;  /* Ctrl+D */
+        /* EINTR from SIGINT: return empty string so the loop continues */
+        buf = malloc(LINE_LEN);
+        if (!buf) return NULL;
+        buf[0] = '\0';
+        return buf;
+    }
+    return buf;
+}
+
+void parsePath(void)
+{
+    const char *path_env = getenv("PATH");
+    if (!path_env) { pathv[0] = NULL; return; }
+
+    char *copy = strdup(path_env);
+    if (!copy) { pathv[0] = NULL; return; }
+
+    int   n     = 0;
+    char *token = strtok(copy, ":");
+    while (token && n < MAX_PATHS - 1) {
+        pathv[n++] = strdup(token);
+        token = strtok(NULL, ":");
+    }
+    pathv[n] = NULL;
+    free(copy);
 }
