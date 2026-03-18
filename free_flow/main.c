@@ -178,6 +178,7 @@ static void usage(const char *prog)
         "  -S SEED    Random seed (default: time-based)\n"
         "  -u         Require unique solution (retry until found)\n"
         "  -n         Disable ANSI colors (plain ASCII)\n"
+        "  -C         Force ANSI colors even when stdout is not a TTY\n"
         "  -h         Show this help\n"
         "\n"
         "Rules (Numberlink / Flow Free):\n"
@@ -207,6 +208,8 @@ int main(int argc, char *argv[])
             require_unique = 1;
         else if (strcmp(argv[i], "-n") == 0)
             g_use_color = 0;
+        else if (strcmp(argv[i], "-C") == 0)
+            g_use_color = 2; /* force color even when not a TTY */
         else if (strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;
@@ -217,8 +220,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Auto-detect color support */
-    if (!isatty(STDOUT_FILENO))
+    /* Auto-detect color support (unless -C forced it on or -n forced it off) */
+    if (g_use_color == 1 && !isatty(STDOUT_FILENO))
         g_use_color = 0;
 
     /* Auto-compute num_colors if not given */
