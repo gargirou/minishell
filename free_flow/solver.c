@@ -164,6 +164,43 @@ static int connectivity_ok(const State *s)
 }
 
 /*
+ * would_create_2x2()
+ *
+ * Returns 1 if placing color col at (r,c) would complete any 2×2 block
+ * whose other three cells are already filled with the same color.
+ *
+ * Why this matters: a 2×2 block of one color always implies the path
+ * through that block can be rerouted two ways, giving multiple solutions.
+ * Pruning these moves enforces the no-2×2 constraint and is necessary
+ * for generating well-formed (uniquely solvable) puzzles.
+ */
+static int would_create_2x2(const State *s, int r, int c, int col)
+{
+    /*
+     * The cell (r,c) can be the top-left, top-right, bottom-left or
+     * bottom-right corner of a 2×2 block.  Check all four possibilities.
+     */
+    int tops[4][2] = { {r, c}, {r, c-1}, {r-1, c}, {r-1, c-1} };
+
+    for (int i = 0; i < 4; i++) {
+        int r0 = tops[i][0], c0 = tops[i][1];
+        if (r0 < 0 || r0 + 1 >= s->size) continue;
+        if (c0 < 0 || c0 + 1 >= s->size) continue;
+
+        int all_same = 1;
+        for (int dr = 0; dr <= 1 && all_same; dr++) {
+            for (int dc = 0; dc <= 1 && all_same; dc++) {
+                int nr = r0 + dr, nc = c0 + dc;
+                if (nr == r && nc == c) continue; /* cell being placed */
+                if (s->filled[nr][nc] != col) all_same = 0;
+            }
+        }
+        if (all_same) return 1;
+    }
+    return 0;
+}
+
+/*
  * is_feasible()
  *
  * Combined feasibility check: per-color reachability + global connectivity.
@@ -288,7 +325,9 @@ static void backtrack(State *s)
             s->front_c[col] = fc;
 
         } else if (s->filled[nr][nc] == 0) {
-            /* Extend path into an empty cell */
+            /* Extend path into an empty cell — skip if it would form a 2×2 */
+            if (would_create_2x2(s, nr, nc, col)) continue;
+
             s->filled[nr][nc] = col;
             s->front_r[col]   = nr;
             s->front_c[col]   = nc;

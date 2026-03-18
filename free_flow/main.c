@@ -269,23 +269,34 @@ int main(int argc, char *argv[])
         }
 
         /* Structural sanity check */
-        if (!validate_puzzle(&p)) {
-            /* Should never happen; generation bug guard */
+        if (!validate_puzzle(&p)) continue;
+
+        /*
+         * Always require at least one solution that obeys the no-2×2
+         * constraint (enforced inside the solver).  A puzzle whose only
+         * solutions contain 2×2 blocks is discarded and regenerated.
+         */
+        int nsols = count_solutions(&p, require_unique ? 2 : 1);
+
+        if (nsols == 0) {
+            /* No valid solution exists without a 2×2 block — retry */
+            if (attempts % 500 == 0) {
+                printf("  [attempt %d: no valid solution, retrying…]\n",
+                       attempts);
+                fflush(stdout);
+            }
             continue;
         }
 
-        if (require_unique) {
-            int nsols = count_solutions(&p, 2);
-            if (nsols == 1) {
-                found = 1;
-            } else if (attempts % 500 == 0) {
-                printf("  [attempt %d: puzzle has %s solution(s), retrying…]\n",
-                       attempts, nsols >= 2 ? "≥2" : "0");
+        if (require_unique && nsols >= 2) {
+            if (attempts % 500 == 0) {
+                printf("  [attempt %d: ≥2 solutions, retrying…]\n", attempts);
                 fflush(stdout);
             }
-        } else {
-            found = 1;
+            continue;
         }
+
+        found = 1;
     } while (!found && attempts < 50000);
 
     if (!found) {
@@ -304,25 +315,18 @@ int main(int argc, char *argv[])
     print_color_key(num_colors);
     print_puzzle(&p);
 
-    /* ── Solve and validate ─────────────────────────────────────────────── */
+    /* ── Solve and display ──────────────────────────────────────────────── */
+    /*
+     * The solution was already found during the generation loop above.
+     * Re-run the solver here to retrieve it (solve_puzzle stores the first
+     * solution found).  This is fast — the solver exits after one solution.
+     */
     printf("Solving…\n");
     int sol[MAX_SIZE][MAX_SIZE];
-
-    if (!solve_puzzle(&p, sol)) {
-        fprintf(stderr,
-                "ERROR: The generated puzzle has no solution!\n"
-                "(This is a generator bug — please report with seed %u)\n",
-                seed);
-        return 1;
-    }
-
+    solve_puzzle(&p, sol);   /* guaranteed to succeed — we checked above */
     print_solution(&p, sol);
 
     /* ── Uniqueness verdict ─────────────────────────────────────────────── */
-    /*
-     * If we already required uniqueness above, we know the answer.
-     * Otherwise, count up to 2 solutions now.
-     */
     int nsols = require_unique ? 1 : count_solutions(&p, 2);
 
     if (nsols == 1) {
