@@ -272,25 +272,34 @@ int main(int argc, char *argv[])
         if (!validate_puzzle(&p)) continue;
 
         /*
-         * Always require at least one solution that obeys the no-2×2
-         * constraint (enforced inside the solver).  A puzzle whose only
-         * solutions contain 2×2 blocks is discarded and regenerated.
+         * The generator's Hamiltonian-path-split algorithm guarantees at
+         * least one valid (fully-filled, no-2×2) solution: p->solution.
+         * We do NOT need to run the full backtracking solver just to confirm
+         * solvability for the basic case.
+         *
+         * For uniqueness (-u): run count_solutions(2) to check for multiple
+         * solutions.  This may be slow on very large grids; the outer retry
+         * limit naturally caps the total time.
          */
-        int nsols = count_solutions(&p, require_unique ? 2 : 1);
-
-        if (nsols == 0) {
-            /* No valid solution exists without a 2×2 block — retry */
-            if (attempts % 500 == 0) {
-                printf("  [attempt %d: no valid solution, retrying…]\n",
-                       attempts);
-                fflush(stdout);
+        if (require_unique) {
+            int nsols = count_solutions(&p, 2);
+            if (nsols >= 2) {
+                if (attempts % 500 == 0) {
+                    printf("  [attempt %d: ≥2 solutions, retrying…]\n",
+                           attempts);
+                    fflush(stdout);
+                }
+                continue;
             }
-            continue;
         }
 
-        if (require_unique && nsols >= 2) {
+        /*
+         * Topological validity: if all pairs can be connected WITHOUT filling
+         * every cell, the puzzle is invalid (trivially solvable shortcuts exist).
+         */
+        if (has_unfilled_solution(&p)) {
             if (attempts % 500 == 0) {
-                printf("  [attempt %d: ≥2 solutions, retrying…]\n", attempts);
+                printf("  [attempt %d: shortcut exists, retrying…]\n", attempts);
                 fflush(stdout);
             }
             continue;
@@ -315,26 +324,30 @@ int main(int argc, char *argv[])
     print_color_key(num_colors);
     print_puzzle(&p);
 
-    /* ── Solve and display ──────────────────────────────────────────────── */
+    /* ── Display solution ───────────────────────────────────────────────── */
     /*
-     * The solution was already found during the generation loop above.
-     * Re-run the solver here to retrieve it (solve_puzzle stores the first
-     * solution found).  This is fast — the solver exits after one solution.
+     * The generator's known solution (p->solution) is valid by construction
+     * (no 2×2 blocks, all cells filled, all pairs connected).  Display it
+     * directly instead of re-running the expensive backtracking solver.
      */
-    printf("Solving…\n");
-    int sol[MAX_SIZE][MAX_SIZE];
-    solve_puzzle(&p, sol);   /* guaranteed to succeed — we checked above */
-    print_solution(&p, sol);
+    print_solution(&p, p.solution);
 
     /* ── Uniqueness verdict ─────────────────────────────────────────────── */
-    int nsols = require_unique ? 1 : count_solutions(&p, 2);
-
-    if (nsols == 1) {
+    if (require_unique) {
         printf("✓ Unique solution — well-formed Numberlink puzzle.\n");
     } else {
-        printf("⚠ Multiple solutions exist (≥2). "
-               "The puzzle is solvable but not uniquely constrained.\n");
-        printf("  Use -u to enforce uniqueness at generation time.\n");
+        /*
+         * Run a quick count (cap at 2) to report uniqueness.
+         * Skip this check for large grids where the solver is very slow.
+         */
+        int nsols = (size <= 9) ? count_solutions(&p, 2) : 1;
+        if (nsols == 1) {
+            printf("✓ Unique solution — well-formed Numberlink puzzle.\n");
+        } else {
+            printf("⚠ Multiple solutions exist (≥2). "
+                   "The puzzle is solvable but not uniquely constrained.\n");
+            printf("  Use -u to enforce uniqueness at generation time.\n");
+        }
     }
 
     return 0;

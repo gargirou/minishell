@@ -98,6 +98,21 @@ int solve_puzzle(const Puzzle *p, int out[MAX_SIZE][MAX_SIZE]);
 int count_solutions(const Puzzle *p, int max_count);
 
 /*
+ * has_unfilled_solution()
+ *
+ * Returns 1 if there exists any set of non-crossing paths that connects
+ * every pair of endpoints while leaving at least one cell empty.
+ *
+ * A valid Numberlink puzzle must return 0: the topology of the endpoint
+ * placement should make it impossible to connect all pairs without also
+ * covering every cell.  If this returns 1, the puzzle is topologically
+ * degenerate — some pairs can be "shortcut" without using all the cells,
+ * meaning the fill-all-cells rule is doing all the work rather than the
+ * puzzle design itself.
+ */
+int has_unfilled_solution(const Puzzle *p);
+
+/*
  * validate_puzzle()
  *
  * Structural sanity check (does NOT run the solver):

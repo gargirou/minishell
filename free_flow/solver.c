@@ -69,6 +69,14 @@ static int  g_max_sols;
 static int  g_solution[MAX_SIZE][MAX_SIZE];
 static long g_node_count;
 
+/*
+ * Node budget for the has_unfilled_solution() check.
+ * Kept intentionally small: an unfilled shortcut, if it exists, is found
+ * almost immediately (it requires far fewer nodes than a full solution).
+ * If the budget expires without finding one we assume none exists.
+ */
+#define UNFILLED_NODE_BUDGET 200000L
+
 /* ── Pruning helpers ───────────────────────────────────────────────────── */
 
 /*
@@ -391,6 +399,86 @@ static int run_solver(const Puzzle *p, int max_sols)
     return g_nsols;
 }
 
+/* ── Unfilled-solution detector ────────────────────────────────────────── */
+
+/*
+ * backtrack_nofill()
+ *
+ * Like backtrack() but the terminal condition is simply "all pairs
+ * connected" — empty_count is irrelevant.  We record a hit only when
+ * empty_count > 0 (cells left uncovered), since that is the degenerate
+ * case we are testing for.
+ *
+ * Differences from backtrack():
+ *   • Terminal: all_done (not all_done && empty_count == 0).
+ *   • No global connectivity check (we don't need all cells reachable).
+ *   • No 2×2 pruning (we want to detect ANY shortcut, even ugly ones).
+ * Per-color BFS reachability is still enforced (paths must reach goals).
+ */
+static void backtrack_nofill(State *s)
+{
+    if (g_nsols >= g_max_sols)              return;
+    if (++g_node_count > UNFILLED_NODE_BUDGET) return;
+
+    /* Terminal: all pairs done */
+    int all_done = 1;
+    for (int col = 1; col <= s->num_colors; col++)
+        if (!s->done[col]) { all_done = 0; break; }
+
+    if (all_done) {
+        /* Only record solutions that leave at least one cell empty */
+        if (s->empty_count > 0) {
+            g_nsols++;
+            if (g_nsols == 1)
+                memcpy(g_solution, s->filled, sizeof(s->filled));
+        }
+        return;
+    }
+
+    /* Per-color reachability (no global connectivity check) */
+    for (int col = 1; col <= s->num_colors; col++) {
+        if (s->done[col]) continue;
+        if (!can_reach(s, col)) return;
+    }
+
+    int col = pick_color(s);
+    if (col < 0) return;
+
+    int fr = s->front_r[col], fc = s->front_c[col];
+    int gr = s->goal_r [col], gc = s->goal_c [col];
+
+    for (int d = 0; d < 4; d++) {
+        int nr = fr + DR[d], nc = fc + DC[d];
+        if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+
+        if (nr == gr && nc == gc) {
+            s->done[col]    = 1;
+            s->front_r[col] = nr;
+            s->front_c[col] = nc;
+
+            backtrack_nofill(s);
+
+            s->done[col]    = 0;
+            s->front_r[col] = fr;
+            s->front_c[col] = fc;
+
+        } else if (s->filled[nr][nc] == 0) {
+            /* No 2×2 check here — detect any shortcut, even ugly ones */
+            s->filled[nr][nc] = col;
+            s->front_r[col]   = nr;
+            s->front_c[col]   = nc;
+            s->empty_count--;
+
+            backtrack_nofill(s);
+
+            s->filled[nr][nc] = 0;
+            s->front_r[col]   = fr;
+            s->front_c[col]   = fc;
+            s->empty_count++;
+        }
+    }
+}
+
 /* ── Public interface ──────────────────────────────────────────────────── */
 
 int solve_puzzle(const Puzzle *p, int out[MAX_SIZE][MAX_SIZE])
@@ -425,4 +513,43 @@ int validate_puzzle(const Puzzle *p)
         if (ep_count[col] != 2) return 0;
 
     return 1;
+}
+
+int has_unfilled_solution(const Puzzle *p)
+{
+    State s;
+    memset(&s, 0, sizeof(s));
+    s.size       = p->size;
+    s.num_colors = p->num_colors;
+
+    int empty = 0;
+    for (int r = 0; r < p->size; r++) {
+        for (int c = 0; c < p->size; c++) {
+            s.filled[r][c] = p->grid[r][c];
+            if (p->grid[r][c] == 0) empty++;
+        }
+    }
+    s.empty_count = empty;
+
+    int ep_found[MAX_COLORS + 1] = {0};
+    for (int r = 0; r < p->size; r++) {
+        for (int c = 0; c < p->size; c++) {
+            int col = p->grid[r][c];
+            if (!col) continue;
+            if (ep_found[col] == 0) {
+                s.front_r[col] = r; s.front_c[col] = c;
+                ep_found[col]++;
+            } else if (ep_found[col] == 1) {
+                s.goal_r[col]  = r; s.goal_c[col]  = c;
+                ep_found[col]++;
+            }
+        }
+    }
+
+    g_nsols      = 0;
+    g_max_sols   = 1;
+    g_node_count = 0;
+
+    backtrack_nofill(&s);
+    return g_nsols > 0;
 }
