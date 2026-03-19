@@ -366,18 +366,39 @@ static int try_generate(Puzzle *p, int rows, int cols, int nc)
             color++;
         }
 
-        /* Reject if the filled solution grid contains any 2×2 same-color block.
+        /* Reject if the solution grid is structurally invalid.
+         *
+         * Check 1 — 2×2 same-color blocks.
          * subpath_has_2x2() misses paths that fill two adjacent columns/rows
          * (a U-shape), which create 2×2 blocks in the grid without any 4
-         * consecutive path cells fitting in a 2×2 bounding box. */
+         * consecutive path cells fitting in a 2×2 bounding box.
+         *
+         * Check 2 — T-junctions (3+ same-color neighbors for one cell).
+         * The Hamiltonian path can snake back near itself so that a
+         * non-consecutive segment of the same sub-path becomes grid-adjacent
+         * to another cell of that path.  A valid Numberlink path is a simple
+         * chain: every interior cell has exactly 2 same-color neighbors and
+         * every endpoint has exactly 1.  Three or more same-color neighbors
+         * means paths branch, which is invalid. */
         int grid_ok = 1;
-        for (int r = 0; r + 1 < rows && grid_ok; r++) {
-            for (int c = 0; c + 1 < cols && grid_ok; c++) {
+        for (int r = 0; r < rows && grid_ok; r++) {
+            for (int c = 0; c < cols && grid_ok; c++) {
                 int v = p->solution[r][c];
-                if (v == p->solution[r][c+1] &&
-                    v == p->solution[r+1][c]  &&
+
+                /* 2×2 block check */
+                if (r + 1 < rows && c + 1 < cols &&
+                    v == p->solution[r][c+1] &&
+                    v == p->solution[r+1][c] &&
                     v == p->solution[r+1][c+1])
                     grid_ok = 0;
+
+                /* T-junction check */
+                int same = 0;
+                if (r > 0      && p->solution[r-1][c] == v) same++;
+                if (r < rows-1 && p->solution[r+1][c] == v) same++;
+                if (c > 0      && p->solution[r][c-1] == v) same++;
+                if (c < cols-1 && p->solution[r][c+1] == v) same++;
+                if (same >= 3) grid_ok = 0;
             }
         }
         if (!grid_ok) continue;
