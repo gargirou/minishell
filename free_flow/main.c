@@ -2,13 +2,14 @@
  * main.c — Free Flow / Numberlink puzzle generator and validator
  *
  * Usage:  free_flow [-s SIZE] [-r ROWS] [-W COLS] [-c COLORS] [-N COUNT]
- *                   [-S SEED] [-u] [-n] [-h]
+ *                   [-R] [-S SEED] [-u] [-n] [-h]
  *
  *   -s SIZE    Square grid (SIZE×SIZE), default 7
  *   -r ROWS    Number of rows (overrides -s)
  *   -W COLS    Number of columns (overrides -s)
- *   -c COLORS  Number of color pairs (2–14, default auto)
- *   -N COUNT   Generate COUNT puzzles into a single JSON array (default 1)
+ *   -c COLORS  Number of color pairs (2–14, default auto = min_dim-1)
+ *   -N COUNT   Generate COUNT puzzles into one JSON file (default 1)
+ *   -R         Randomize color count per puzzle: pick from {n, n-1, n-2}
  *   -S SEED    Random seed (default: time-based)
  *   -u         Require a unique solution (retry until found)
  *   -n         Disable ANSI colors (plain ASCII output)
@@ -22,6 +23,7 @@
  * ──────────────────
  * Shows a progress line and writes {rows}x{cols}_x{COUNT}.json containing
  * a top-level metadata wrapper and a "puzzles" array of COUNT objects.
+ * With -R each puzzle may have a different num_colors.
  *
  * Display conventions
  * ───────────────────
@@ -161,16 +163,24 @@ static void print_color_key(int num_colors)
 /* ── JSON helpers ──────────────────────────────────────────────────────── */
 
 /*
- * fnv1a32() — FNV-1a 32-bit hash.
- * Fast, deterministic, no dependencies.
+ * fnv1a32_grid()
+ *
+ * FNV-1a 32-bit hash over only the used rows×cols cells.
+ * Hashing the full MAX_ROWS×MAX_COLS array would waste ~37% on a 10×14
+ * puzzle (padding zeros are deterministic but add unnecessary work).
  */
-static uint32_t fnv1a32(const void *data, size_t len)
+static uint32_t fnv1a32_grid(const int grid[MAX_ROWS][MAX_COLS],
+                               int rows, int cols)
 {
-    const unsigned char *p = (const unsigned char *)data;
     uint32_t h = 2166136261u;
-    for (size_t i = 0; i < len; i++) {
-        h ^= p[i];
-        h *= 16777619u;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            const unsigned char *b = (const unsigned char *)&grid[r][c];
+            for (int i = 0; i < (int)sizeof(int); i++) {
+                h ^= b[i];
+                h *= 16777619u;
+            }
+        }
     }
     return h;
 }
@@ -195,6 +205,28 @@ static const char *difficulty_label(int rows, int cols, int num_colors)
     return "expert";
 }
 
+/*
+ * write_grid_json()
+ *
+ * Write a 2-D integer grid as a named JSON array field.
+ * Used for both "puzzle" and "solution" to avoid code duplication.
+ * trailing_comma controls whether a comma follows the closing bracket.
+ */
+static void write_grid_json(FILE *f, const int grid[MAX_ROWS][MAX_COLS],
+                             int rows, int cols,
+                             const char *field, const char *ind,
+                             int trailing_comma)
+{
+    fprintf(f, "%s  \"%s\": [\n", ind, field);
+    for (int r = 0; r < rows; r++) {
+        fprintf(f, "%s    [", ind);
+        for (int c = 0; c < cols; c++)
+            fprintf(f, "%d%s", grid[r][c], c < cols - 1 ? ", " : "");
+        fprintf(f, "]%s\n", r < rows - 1 ? "," : "");
+    }
+    fprintf(f, "%s  ]%s\n", ind, trailing_comma ? "," : "");
+}
+
 /* ── Core JSON writer ──────────────────────────────────────────────────── */
 
 /*
@@ -202,21 +234,22 @@ static const char *difficulty_label(int rows, int cols, int num_colors)
  *
  * Write one puzzle as a JSON object to the already-open file f.
  *
- *   indent  — prefix string for each line (e.g. "    " when inside an array)
- *   index   — 0-based position in a batch; pass -1 for single-puzzle mode,
- *             which instead emits rows/cols/num_colors/seed at the top.
- *   seed    — original srand() seed (used in single mode only)
+ *   ind      — indent prefix for each line (e.g. "    " inside an array)
+ *   index    — 0-based batch position; pass -1 for single-puzzle mode,
+ *              which emits rows/cols/seed instead of an "index" field
+ *   seed     — original srand() seed (single mode only)
  *
- * The object is written without a trailing newline or comma so the caller
- * can append "," or "\n" as needed.
+ * num_colors is always emitted from p->num_colors so each object is
+ * self-contained even when -R produces varying counts across a batch.
+ *
+ * The object is written without a trailing newline or comma.
  */
 static void write_puzzle_object(FILE *f, const Puzzle *p,
                                  unsigned int seed, int index,
                                  const char *ind)
 {
-    /* Hash: XOR-combine both grids for a stable unique fingerprint */
-    uint32_t h1   = fnv1a32(p->grid,     sizeof(p->grid));
-    uint32_t h2   = fnv1a32(p->solution, sizeof(p->solution));
+    uint32_t h1   = fnv1a32_grid(p->grid,     p->rows, p->cols);
+    uint32_t h2   = fnv1a32_grid(p->solution, p->rows, p->cols);
     uint32_t hash = h1 ^ (h2 * 2654435761u);
 
     double avg_path = (double)(p->rows * p->cols) / p->num_colors;
@@ -231,20 +264,21 @@ static void write_puzzle_object(FILE *f, const Puzzle *p,
 
     fprintf(f, "%s{\n", ind);
 
-    /* In single mode embed the shared metadata inside the object */
     if (index < 0) {
+        /* Single-puzzle mode: embed shared metadata inside the object */
         fprintf(f, "%s  \"rows\": %d,\n",       ind, p->rows);
         fprintf(f, "%s  \"cols\": %d,\n",       ind, p->cols);
-        fprintf(f, "%s  \"num_colors\": %d,\n", ind, p->num_colors);
         fprintf(f, "%s  \"seed\": %u,\n",       ind, seed);
     } else {
         fprintf(f, "%s  \"index\": %d,\n", ind, index);
     }
 
+    /* num_colors always present — each object is self-contained */
+    fprintf(f, "%s  \"num_colors\": %d,\n",  ind, p->num_colors);
     fprintf(f, "%s  \"difficulty\": \"%s\",\n", ind,
             difficulty_label(p->rows, p->cols, p->num_colors));
     fprintf(f, "%s  \"avg_path_length\": %.2f,\n", ind, avg_path);
-    fprintf(f, "%s  \"hash\": \"%08x\",\n", ind, hash);
+    fprintf(f, "%s  \"hash\": \"%08x\",\n",  ind, hash);
 
     /* colors */
     fprintf(f, "%s  \"colors\": [\n", ind);
@@ -266,25 +300,9 @@ static void write_puzzle_object(FILE *f, const Puzzle *p,
     }
     fprintf(f, "%s  ],\n", ind);
 
-    /* puzzle (sparse endpoint grid) */
-    fprintf(f, "%s  \"puzzle\": [\n", ind);
-    for (int r = 0; r < p->rows; r++) {
-        fprintf(f, "%s    [", ind);
-        for (int c = 0; c < p->cols; c++)
-            fprintf(f, "%d%s", p->grid[r][c], c < p->cols - 1 ? ", " : "");
-        fprintf(f, "]%s\n", r < p->rows - 1 ? "," : "");
-    }
-    fprintf(f, "%s  ],\n", ind);
+    write_grid_json(f, p->grid,     p->rows, p->cols, "puzzle",   ind, 1);
+    write_grid_json(f, p->solution, p->rows, p->cols, "solution", ind, 0);
 
-    /* solution (fully connected) */
-    fprintf(f, "%s  \"solution\": [\n", ind);
-    for (int r = 0; r < p->rows; r++) {
-        fprintf(f, "%s    [", ind);
-        for (int c = 0; c < p->cols; c++)
-            fprintf(f, "%d%s", p->solution[r][c], c < p->cols - 1 ? ", " : "");
-        fprintf(f, "]%s\n", r < p->rows - 1 ? "," : "");
-    }
-    fprintf(f, "%s  ]\n", ind);
     fprintf(f, "%s}", ind);
 }
 
@@ -294,13 +312,14 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
         "Usage: %s [-s SIZE] [-r ROWS] [-W COLS] [-c COLORS] [-N COUNT]\n"
-        "       %*s [-S SEED] [-u] [-n] [-C] [-h]\n"
+        "       %*s [-R] [-S SEED] [-u] [-n] [-C] [-h]\n"
         "\n"
         "  -s SIZE    Square grid SIZE×SIZE (2-%d, default 7)\n"
         "  -r ROWS    Number of rows (2-%d, overrides -s)\n"
         "  -W COLS    Number of columns (2-%d, overrides -s)\n"
-        "  -c COLORS  Number of color pairs (2-%d, default auto)\n"
+        "  -c COLORS  Number of color pairs (2-%d, default auto = min_dim-1)\n"
         "  -N COUNT   Generate COUNT puzzles into one JSON file (default 1)\n"
+        "  -R         Randomize colors per puzzle: pick from {n, n-1, n-2}\n"
         "  -S SEED    Random seed (default: time-based)\n"
         "  -u         Require unique solution (retry until found)\n"
         "  -n         Disable ANSI colors (plain ASCII)\n"
@@ -308,7 +327,7 @@ static void usage(const char *prog)
         "  -h         Show this help\n"
         "\n"
         "Output files\n"
-        "  COUNT=1  → {rows}x{cols}.json          (single puzzle object)\n"
+        "  COUNT=1  → {rows}x{cols}.json           (single puzzle object)\n"
         "  COUNT>1  → {rows}x{cols}_x{COUNT}.json  (array of COUNT puzzles)\n"
         "\n"
         "Rules (Numberlink / Flow Free):\n"
@@ -323,16 +342,21 @@ static void usage(const char *prog)
 /*
  * gen_valid_puzzle()
  *
- * Run the full generation + validation loop until a valid puzzle is found
- * or the attempt limit is hit.  Returns the number of attempts on success,
- * 0 on fatal generator error, -1 if the attempt limit was exhausted.
+ * Run the generate+validate loop until a valid puzzle is produced.
+ * Returns: number of attempts on success (>0), 0 on fatal generator
+ * error, -1 if the 50 000-attempt limit is exhausted.
  */
 static int gen_valid_puzzle(Puzzle *p, int rows, int cols,
                              int num_colors, int require_unique)
 {
     for (int attempt = 1; attempt <= 50000; attempt++) {
-        if (!generate_puzzle(p, rows, cols, num_colors))
-            return 0;   /* fatal: generator returned no candidate */
+        /*
+         * generate_puzzle() has its own internal retry budget.  When it
+         * returns 0 the rand() state has advanced, so a subsequent call
+         * will explore a different part of the search space — don't bail.
+         * Truly invalid parameters are caught by explicit checks in main().
+         */
+        if (!generate_puzzle(p, rows, cols, num_colors)) continue;
 
         if (!validate_puzzle(p)) continue;
 
@@ -342,7 +366,7 @@ static int gen_valid_puzzle(Puzzle *p, int rows, int cols,
 
         return attempt;
     }
-    return -1;  /* exhausted */
+    return -1;
 }
 
 /* ── main ──────────────────────────────────────────────────────────────── */
@@ -351,22 +375,24 @@ int main(int argc, char *argv[])
 {
     int  rows           = 7;
     int  cols           = 7;
-    int  num_colors     = -1;
+    int  num_colors     = -1;   /* -1 = auto-compute */
     int  num_puzzles    = 1;
+    int  rand_colors    = 0;    /* -R: randomize color count per puzzle */
     int  require_unique = 0;
     unsigned int seed   = (unsigned int)time(NULL);
 
     /* ── Parse arguments ─────────────────────────────────────────────── */
     for (int i = 1; i < argc; i++) {
         if      (strcmp(argv[i], "-s") == 0 && i+1 < argc) rows = cols = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-r") == 0 && i+1 < argc) rows  = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-W") == 0 && i+1 < argc) cols  = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-r") == 0 && i+1 < argc) rows        = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-W") == 0 && i+1 < argc) cols        = atoi(argv[++i]);
         else if (strcmp(argv[i], "-c") == 0 && i+1 < argc) num_colors  = atoi(argv[++i]);
         else if (strcmp(argv[i], "-N") == 0 && i+1 < argc) num_puzzles = atoi(argv[++i]);
         else if (strcmp(argv[i], "-S") == 0 && i+1 < argc) seed = (unsigned int)atoi(argv[++i]);
         else if (strcmp(argv[i], "-u") == 0) require_unique = 1;
-        else if (strcmp(argv[i], "-n") == 0) g_use_color = 0;
-        else if (strcmp(argv[i], "-C") == 0) g_use_color = 2;
+        else if (strcmp(argv[i], "-R") == 0) rand_colors    = 1;
+        else if (strcmp(argv[i], "-n") == 0) g_use_color    = 0;
+        else if (strcmp(argv[i], "-C") == 0) g_use_color    = 2;
         else if (strcmp(argv[i], "-h") == 0) { usage(argv[0]); return 0; }
         else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -378,16 +404,18 @@ int main(int argc, char *argv[])
     if (g_use_color == 1 && !isatty(STDOUT_FILENO))
         g_use_color = 0;
 
+    /* Auto-compute base color count: smaller dimension - 1 */
     if (num_colors < 0) {
         int min_dim = rows < cols ? rows : cols;
         num_colors = min_dim - 1;
         if (num_colors > MAX_COLORS) num_colors = MAX_COLORS;
         if (num_colors < 2)          num_colors = 2;
     }
+    int base_colors = num_colors;   /* save for -R randomization */
 
     /* Validate */
-    if (rows < 2 || rows > MAX_ROWS)  { fprintf(stderr, "Error: rows must be 2-%d\n",   MAX_ROWS);   return 1; }
-    if (cols < 2 || cols > MAX_COLS)  { fprintf(stderr, "Error: cols must be 2-%d\n",   MAX_COLS);   return 1; }
+    if (rows < 2 || rows > MAX_ROWS) { fprintf(stderr, "Error: rows must be 2-%d\n",   MAX_ROWS);   return 1; }
+    if (cols < 2 || cols > MAX_COLS) { fprintf(stderr, "Error: cols must be 2-%d\n",   MAX_COLS);   return 1; }
     if (num_colors < 2 || num_colors > MAX_COLORS) { fprintf(stderr, "Error: colors must be 2-%d\n", MAX_COLORS); return 1; }
     if (num_colors * 2 > rows * cols) {
         fprintf(stderr, "Error: %d colors need %d cells but %dx%d only has %d\n",
@@ -400,18 +428,25 @@ int main(int argc, char *argv[])
 
     printf("Free Flow / Numberlink Generator\n");
     printf("═════════════════════════════════\n");
-    printf("Seed: %u  |  Grid: %dx%d  |  Colors: %d  |  Count: %d\n\n",
-           seed, rows, cols, num_colors, num_puzzles);
+    if (rand_colors)
+        printf("Seed: %u  |  Grid: %dx%d  |  Colors: %d-%d (random)  |  Count: %d\n\n",
+               seed, rows, cols,
+               (base_colors - 2 < 2 ? 2 : base_colors - 2), base_colors,
+               num_puzzles);
+    else
+        printf("Seed: %u  |  Grid: %dx%d  |  Colors: %d  |  Count: %d\n\n",
+               seed, rows, cols, num_colors, num_puzzles);
 
     /* ── Single puzzle ───────────────────────────────────────────────── */
     if (num_puzzles == 1) {
+        /* With -R, pick a random color count for this one puzzle */
+        if (rand_colors) {
+            num_colors = base_colors - (rand() % 3);
+            if (num_colors < 2) num_colors = 2;
+        }
+
         Puzzle p;
         int attempts = gen_valid_puzzle(&p, rows, cols, num_colors, require_unique);
-        if (attempts == 0) {
-            fprintf(stderr, "Error: generator failed for %dx%d with %d colors.\n",
-                    rows, cols, num_colors);
-            return 1;
-        }
         if (attempts < 0) {
             fprintf(stderr, "Error: could not find a valid puzzle in 50000 attempts.\n"
                             "Tip: try a smaller grid or fewer colors.\n");
@@ -436,7 +471,6 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* Write single-puzzle JSON */
         char filename[64];
         snprintf(filename, sizeof(filename), "%dx%d.json", rows, cols);
         FILE *f = fopen(filename, "w");
@@ -445,7 +479,6 @@ int main(int argc, char *argv[])
         fprintf(f, "\n");
         fclose(f);
         printf("JSON written to %s\n", filename);
-
         return 0;
     }
 
@@ -459,39 +492,45 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Top-level wrapper with shared metadata */
+    /* Top-level wrapper */
     fprintf(f, "{\n");
-    fprintf(f, "  \"rows\": %d,\n",       rows);
-    fprintf(f, "  \"cols\": %d,\n",       cols);
-    fprintf(f, "  \"num_colors\": %d,\n", num_colors);
-    fprintf(f, "  \"count\": %d,\n",      num_puzzles);
-    fprintf(f, "  \"seed\": %u,\n",       seed);
+    fprintf(f, "  \"rows\": %d,\n",    rows);
+    fprintf(f, "  \"cols\": %d,\n",    cols);
+    fprintf(f, "  \"count\": %d,\n",   num_puzzles);
+    fprintf(f, "  \"seed\": %u,\n",    seed);
+    if (rand_colors) {
+        int lo = base_colors - 2 < 2 ? 2 : base_colors - 2;
+        fprintf(f, "  \"num_colors_range\": [%d, %d],\n", lo, base_colors);
+    } else {
+        fprintf(f, "  \"num_colors\": %d,\n", num_colors);
+    }
     fprintf(f, "  \"puzzles\": [\n");
 
     int total_attempts = 0;
     for (int i = 0; i < num_puzzles; i++) {
-        Puzzle p;
-        int attempts = gen_valid_puzzle(&p, rows, cols, num_colors, require_unique);
-        if (attempts == 0) {
-            fprintf(stderr, "\nError: generator failed on puzzle %d/%d.\n",
-                    i + 1, num_puzzles);
-            fclose(f);
-            return 1;
+        /* -R: pick color count randomly from {base, base-1, base-2} */
+        int nc = base_colors;
+        if (rand_colors) {
+            nc = base_colors - (rand() % 3);
+            if (nc < 2) nc = 2;
         }
+
+        Puzzle p;
+        int attempts = gen_valid_puzzle(&p, rows, cols, nc, require_unique);
         if (attempts < 0) {
-            fprintf(stderr, "\nError: could not generate puzzle %d/%d in 50000 attempts.\n",
+            fprintf(stderr, "\nError: attempt limit reached on puzzle %d/%d.\n"
+                            "Tip: try fewer colors or a smaller grid.\n",
                     i + 1, num_puzzles);
             fclose(f);
+            remove(filename);   /* don't leave a partial/invalid JSON file */
             return 1;
         }
         total_attempts += attempts;
 
-        /* Stream puzzle into the JSON array */
         write_puzzle_object(f, &p, seed, i, "    ");
         fprintf(f, "%s\n", i < num_puzzles - 1 ? "," : "");
 
-        /* Progress line (overwrite in place) */
-        printf("\r  [%d/%d] generated  (total attempts so far: %d)   ",
+        printf("\r  [%d/%d] generated  (total attempts: %d)   ",
                i + 1, num_puzzles, total_attempts);
         fflush(stdout);
     }
