@@ -75,7 +75,7 @@ static long g_node_count;
  * almost immediately (it requires far fewer nodes than a full solution).
  * If the budget expires without finding one we assume none exists.
  */
-#define UNFILLED_NODE_BUDGET 200000L
+#define UNFILLED_NODE_BUDGET 30000L
 
 /* ── Pruning helpers ───────────────────────────────────────────────────── */
 

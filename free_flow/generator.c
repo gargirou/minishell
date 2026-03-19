@@ -298,11 +298,11 @@ static int greedy_splits(const int bad[], int nb, int nc, int total,
         /* Range for the split: [i+1, i+3], clamped to valid positions */
         int lo = i + 1;
         int hi = i + 3;
-        if (hi > total - 2) hi = total - 2; /* keep last sub-path ≥ 2 cells */
+        if (hi > total - 3) hi = total - 3; /* keep last sub-path ≥ 3 cells */
         if (lo > hi) return -1; /* can't fix this bad group */
 
-        /* Clamp to ensure the new sub-path has ≥ 2 cells */
-        if (lo < last_split + 2) lo = last_split + 2;
+        /* Clamp to ensure the new sub-path has ≥ 3 cells */
+        if (lo < last_split + 3) lo = last_split + 3;
         if (lo > hi) return -1;
 
         /* Check budget */
@@ -376,7 +376,7 @@ static int try_generate(Puzzle *p, int size, int nc)
             for (int i = 0; i < ns; i++) used[gsplits[i]] = 1;
 
             int pool[MAX_SIZE * MAX_SIZE], npool = 0;
-            for (int i = 2; i <= total - 2; i++)
+            for (int i = 3; i <= total - 3; i++)
                 if (!used[i]) pool[npool++] = i;
 
             if (npool < extra_needed) return 0;
@@ -394,13 +394,19 @@ static int try_generate(Puzzle *p, int size, int nc)
             cuts[j+1] = key;
         }
 
-        /* Validate minimum length (≥ 2 per sub-path) */
+        /* Validate minimum length (≥ 3 per sub-path) and non-adjacent endpoints.
+         * Even-length sub-paths of length >= 4 can still produce adjacent
+         * endpoints (e.g. A→B→C→D forming a U-shape), so we explicitly check. */
         int ok = 1, prev = 0;
-        for (int i = 0; i < ncuts && ok; i++) {
-            if (cuts[i] - prev < 2) ok = 0;
-            prev = cuts[i];
+        for (int i = 0; i <= ncuts && ok; i++) {
+            int end = (i < ncuts) ? cuts[i] : total;
+            if (end - prev < 3) { ok = 0; break; }
+            /* Check that endpoints of this sub-path are not grid-adjacent */
+            int r0 = path_r[prev], c0 = path_c[prev];
+            int r1 = path_r[end-1], c1 = path_c[end-1];
+            if (abs(r0-r1) + abs(c0-c1) == 1) ok = 0;
+            prev = end;
         }
-        if (total - prev < 2) ok = 0;
         if (!ok) continue;
 
         /* Final 2×2 check (greedy handles bad positions, but double-check) */
