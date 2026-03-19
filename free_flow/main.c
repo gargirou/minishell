@@ -311,20 +311,21 @@ static void write_puzzle_object(FILE *f, const Puzzle *p,
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s [-s SIZE] [-r ROWS] [-W COLS] [-c COLORS] [-N COUNT]\n"
+        "Usage: %s [-s SIZE] [-r ROWS] [-W COLS] [-e ENDPOINTS] [-N COUNT]\n"
         "       %*s [-R] [-S SEED] [-u] [-n] [-C] [-h]\n"
         "\n"
-        "  -s SIZE    Square grid SIZE×SIZE (2-%d, default 7)\n"
-        "  -r ROWS    Number of rows (2-%d, overrides -s)\n"
-        "  -W COLS    Number of columns (2-%d, overrides -s)\n"
-        "  -c COLORS  Number of color pairs (2-%d, default auto = min_dim-1)\n"
-        "  -N COUNT   Generate COUNT puzzles into one JSON file (default 1)\n"
-        "  -R         Randomize colors per puzzle: pick from {n, n-1, n-2}\n"
-        "  -S SEED    Random seed (default: time-based)\n"
-        "  -u         Require unique solution (retry until found)\n"
-        "  -n         Disable ANSI colors (plain ASCII)\n"
-        "  -C         Force ANSI colors even when stdout is not a TTY\n"
-        "  -h         Show this help\n"
+        "  -s SIZE       Square grid SIZE×SIZE (2-%d, default 7)\n"
+        "  -r ROWS       Number of rows (2-%d, overrides -s)\n"
+        "  -W COLS       Number of columns (2-%d, overrides -s)\n"
+        "  -e ENDPOINTS  Number of endpoint pairs (2-%d,\n"
+        "                default auto: >8 wide → cols-5, ≤8 wide → cols-2)\n"
+        "  -N COUNT      Generate COUNT puzzles into one JSON file (default 1)\n"
+        "  -R            Randomize endpoints per puzzle: pick from {n, n-1, n-2}\n"
+        "  -S SEED       Random seed (default: time-based)\n"
+        "  -u            Require unique solution (retry until found)\n"
+        "  -n            Disable ANSI colors (plain ASCII)\n"
+        "  -C            Force ANSI colors even when stdout is not a TTY\n"
+        "  -h            Show this help\n"
         "\n"
         "Output files\n"
         "  COUNT=1  → {rows}x{cols}.json           (single puzzle object)\n"
@@ -386,7 +387,8 @@ int main(int argc, char *argv[])
         if      (strcmp(argv[i], "-s") == 0 && i+1 < argc) rows = cols = atoi(argv[++i]);
         else if (strcmp(argv[i], "-r") == 0 && i+1 < argc) rows        = atoi(argv[++i]);
         else if (strcmp(argv[i], "-W") == 0 && i+1 < argc) cols        = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-c") == 0 && i+1 < argc) num_colors  = atoi(argv[++i]);
+        else if ((strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "-c") == 0) && i+1 < argc)
+                                                            num_colors  = atoi(argv[++i]);
         else if (strcmp(argv[i], "-N") == 0 && i+1 < argc) num_puzzles = atoi(argv[++i]);
         else if (strcmp(argv[i], "-S") == 0 && i+1 < argc) seed = (unsigned int)atoi(argv[++i]);
         else if (strcmp(argv[i], "-u") == 0) require_unique = 1;
