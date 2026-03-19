@@ -31,7 +31,7 @@
 #define PUZZLE_H
 
 /* ── Compile-time limits ───────────────────────────────────────────────── */
-#define MAX_SIZE    12   /* maximum grid dimension (12×12 = 144 cells)      */
+#define MAX_SIZE    15   /* maximum grid dimension (15×15 = 225 cells)      */
 #define MAX_COLORS  14   /* maximum number of color pairs                   */
 
 /* ── Core data structure ───────────────────────────────────────────────── */
