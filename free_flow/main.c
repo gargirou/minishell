@@ -404,10 +404,14 @@ int main(int argc, char *argv[])
     if (g_use_color == 1 && !isatty(STDOUT_FILENO))
         g_use_color = 0;
 
-    /* Auto-compute base color count: smaller dimension - 1 */
+    /* Auto-compute base color count based on grid size:
+     *   > 8x8: width - 5
+     *  <= 8x8: width - 2  */
     if (num_colors < 0) {
-        int min_dim = rows < cols ? rows : cols;
-        num_colors = min_dim - 1;
+        if (rows > 8 || cols > 8)
+            num_colors = cols - 5;
+        else
+            num_colors = cols - 2;
         if (num_colors > MAX_COLORS) num_colors = MAX_COLORS;
         if (num_colors < 2)          num_colors = 2;
     }
