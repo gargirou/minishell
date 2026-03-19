@@ -69,6 +69,11 @@ static void shuffle(int *arr, int n)
     }
 }
 
+static int is_edge_cell(int r, int c, int rows, int cols)
+{
+    return (r == 0 || r == rows - 1 || c == 0 || c == cols - 1);
+}
+
 /*
  * warnsdorff_degree()
  *
@@ -149,14 +154,13 @@ static int dfs_hamiltonian(int path_r[], int path_c[],
 /*
  * find_hamiltonian()
  *
- * Find a Hamiltonian path starting from a random cell.
+ * Find a Hamiltonian path starting from a random cell using Warnsdorff's DFS.
  * Returns 1 on success; path_r[]/path_c[] contain the ordered cells.
  */
 static int find_hamiltonian(int path_r[], int path_c[], int rows, int cols)
 {
     int total = rows * cols;
 
-    /* Random starting cell */
     int sr = rand() % rows, sc = rand() % cols;
 
     int vis[MAX_ROWS][MAX_COLS];
@@ -251,7 +255,9 @@ static int find_bad_positions(const int path_r[], const int path_c[],
  * minimum set of split points that "pierce" every bad group.
  */
 static int greedy_splits(const int bad[], int nb, int nc, int total,
-                          int splits[])
+                          int splits[],
+                          const int path_r[], const int path_c[],
+                          int rows, int cols)
 {
     int ns = 0;
     int last_split = 0;
@@ -270,11 +276,22 @@ static int greedy_splits(const int bad[], int nb, int nc, int total,
 
         if (ns >= nc - 1) return -1;
 
-        int k = lo + rand() % (hi - lo + 1);
-        splits[ns++] = k;
-        last_split = k;
+        /* Prefer a cut at an edge cell within [lo, hi] */
+        int edge_cands[4], ne = 0;
+        for (int k = lo; k <= hi; k++)
+            if (is_edge_cell(path_r[k], path_c[k], rows, cols))
+                edge_cands[ne++] = k;
 
-        while (gi < nb && bad[gi] < k) gi++;
+        int chosen;
+        if (ne > 0)
+            chosen = edge_cands[rand() % ne];
+        else
+            chosen = lo + rand() % (hi - lo + 1);
+
+        splits[ns++] = chosen;
+        last_split = chosen;
+
+        while (gi < nb && bad[gi] < chosen) gi++;
     }
 
     return ns;
@@ -300,7 +317,8 @@ static int try_generate(Puzzle *p, int rows, int cols, int nc)
     for (int attempt = 0; attempt < MAX_SPLIT_TRIES; attempt++) {
 
         int gsplits[MAX_COLORS];
-        int ns = greedy_splits(bad, nb, nc, total, gsplits);
+        int ns = greedy_splits(bad, nb, nc, total, gsplits,
+                               path_r, path_c, rows, cols);
         if (ns < 0) return 0;
 
         int extra_needed = (nc - 1) - ns;
@@ -313,15 +331,27 @@ static int try_generate(Puzzle *p, int rows, int cols, int nc)
             memset(used, 0, total * sizeof(int));
             for (int i = 0; i < ns; i++) used[gsplits[i]] = 1;
 
-            int pool[MAX_ROWS * MAX_COLS], npool = 0;
-            for (int i = 3; i <= total - 3; i++)
-                if (!used[i]) pool[npool++] = i;
+            /* Separate edge positions (preferred) from interior positions */
+            int edge_pool[MAX_ROWS * MAX_COLS], ne_pool = 0;
+            int int_pool[MAX_ROWS * MAX_COLS],  ni_pool = 0;
+            for (int i = 3; i <= total - 3; i++) {
+                if (used[i]) continue;
+                if (is_edge_cell(path_r[i], path_c[i], rows, cols))
+                    edge_pool[ne_pool++] = i;
+                else
+                    int_pool[ni_pool++] = i;
+            }
 
-            if (npool < extra_needed) return 0;
-            shuffle(pool, npool);
+            if (ne_pool + ni_pool < extra_needed) return 0;
+            shuffle(edge_pool, ne_pool);
+            shuffle(int_pool, ni_pool);
 
-            for (int i = 0; i < extra_needed; i++)
-                cuts[ns + i] = pool[i];
+            /* Fill cuts with edge positions first, then interior */
+            int pi = 0;
+            for (int i = 0; i < ne_pool && pi < extra_needed; i++)
+                cuts[ns + pi++] = edge_pool[i];
+            for (int i = 0; i < ni_pool && pi < extra_needed; i++)
+                cuts[ns + pi++] = int_pool[i];
         }
 
         /* Sort all nc-1 cuts */
