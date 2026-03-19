@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>   /* isatty() */
 
@@ -164,6 +165,145 @@ static void print_color_key(int num_colors)
         if (col < num_colors) printf(" ");
     }
     printf("\n\n");
+}
+
+/* ── JSON output ───────────────────────────────────────────────────────── */
+
+/*
+ * fnv1a32()
+ *
+ * FNV-1a 32-bit hash — fast, deterministic, no dependencies.
+ * Used to produce a unique fingerprint for each puzzle.
+ */
+static uint32_t fnv1a32(const void *data, size_t len)
+{
+    const unsigned char *p = (const unsigned char *)data;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/*
+ * difficulty_label()
+ *
+ * Classify puzzle difficulty based on average path length
+ * (total cells / number of colors).  Longer paths require more
+ * look-ahead and are generally harder for human solvers.
+ *
+ *   avg < 6   → easy
+ *   avg < 12  → medium
+ *   avg < 20  → hard
+ *   avg ≥ 20  → expert
+ */
+static const char *difficulty_label(int rows, int cols, int num_colors)
+{
+    double avg = (double)(rows * cols) / num_colors;
+    if (avg < 6.0)  return "easy";
+    if (avg < 12.0) return "medium";
+    if (avg < 20.0) return "hard";
+    return "expert";
+}
+
+/*
+ * write_puzzle_json()
+ *
+ * Write the puzzle to a JSON file named "{rows}x{cols}.json".
+ *
+ * Fields:
+ *   rows, cols, num_colors, seed
+ *   difficulty        — "easy" / "medium" / "hard" / "expert"
+ *   avg_path_length   — cells ÷ colors (difficulty proxy)
+ *   hash              — FNV-1a fingerprint of puzzle + solution grids
+ *   colors[]          — per-color metadata (label, endpoints, path length)
+ *   puzzle[][]        — sparse grid: 0 = empty, 1..k = endpoint clue
+ *   solution[][]      — fully connected: every cell has a color 1..k
+ */
+static void write_puzzle_json(const Puzzle *p, unsigned int seed)
+{
+    char filename[64];
+    snprintf(filename, sizeof(filename), "%dx%d.json", p->rows, p->cols);
+
+    FILE *f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "Warning: could not write %s\n", filename);
+        return;
+    }
+
+    /* Hash: XOR-combine fingerprints of both grids for a stable unique id */
+    uint32_t h1   = fnv1a32(p->grid,     sizeof(p->grid));
+    uint32_t h2   = fnv1a32(p->solution, sizeof(p->solution));
+    uint32_t hash = h1 ^ (h2 * 2654435761u);   /* Knuth multiplicative mix */
+
+    double avg_path = (double)(p->rows * p->cols) / p->num_colors;
+
+    /* Count path length per color from the solution grid */
+    int path_len[MAX_COLORS + 1];
+    memset(path_len, 0, sizeof(path_len));
+    for (int r = 0; r < p->rows; r++)
+        for (int c = 0; c < p->cols; c++)
+            if (p->solution[r][c] > 0)
+                path_len[p->solution[r][c]]++;
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"rows\": %d,\n",        p->rows);
+    fprintf(f, "  \"cols\": %d,\n",        p->cols);
+    fprintf(f, "  \"num_colors\": %d,\n",  p->num_colors);
+    fprintf(f, "  \"seed\": %u,\n",        seed);
+    fprintf(f, "  \"difficulty\": \"%s\",\n",
+            difficulty_label(p->rows, p->cols, p->num_colors));
+    fprintf(f, "  \"avg_path_length\": %.2f,\n", avg_path);
+    fprintf(f, "  \"hash\": \"%08x\",\n",  hash);
+
+    /* ── colors ── */
+    fprintf(f, "  \"colors\": [\n");
+    for (int col = 1; col <= p->num_colors; col++) {
+        /* Find the two endpoints in row-major order */
+        int sr = -1, sc = -1, er = -1, ec = -1, found = 0;
+        for (int r = 0; r < p->rows && found < 2; r++) {
+            for (int c = 0; c < p->cols && found < 2; c++) {
+                if (p->grid[r][c] == col) {
+                    if (!found) { sr = r; sc = c; }
+                    else        { er = r; ec = c; }
+                    found++;
+                }
+            }
+        }
+        fprintf(f,
+            "    {\"id\": %d, \"label\": \"%c\", "
+            "\"path_length\": %d, "
+            "\"start\": [%d, %d], \"end\": [%d, %d]}%s\n",
+            col, LABELS[col], path_len[col],
+            sr, sc, er, ec,
+            col < p->num_colors ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    /* ── puzzle (sparse endpoint grid) ── */
+    fprintf(f, "  \"puzzle\": [\n");
+    for (int r = 0; r < p->rows; r++) {
+        fprintf(f, "    [");
+        for (int c = 0; c < p->cols; c++)
+            fprintf(f, "%d%s", p->grid[r][c], c < p->cols - 1 ? ", " : "");
+        fprintf(f, "]%s\n", r < p->rows - 1 ? "," : "");
+    }
+    fprintf(f, "  ],\n");
+
+    /* ── solution (fully connected) ── */
+    fprintf(f, "  \"solution\": [\n");
+    for (int r = 0; r < p->rows; r++) {
+        fprintf(f, "    [");
+        for (int c = 0; c < p->cols; c++)
+            fprintf(f, "%d%s", p->solution[r][c], c < p->cols - 1 ? ", " : "");
+        fprintf(f, "]%s\n", r < p->rows - 1 ? "," : "");
+    }
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+
+    fclose(f);
+    printf("JSON written to %s\n", filename);
 }
 
 /* ── Usage ─────────────────────────────────────────────────────────────── */
@@ -338,6 +478,9 @@ int main(int argc, char *argv[])
             printf("  Use -u to enforce uniqueness at generation time.\n");
         }
     }
+
+    /* ── Write JSON output ──────────────────────────────────────────────── */
+    write_puzzle_json(&p, seed);
 
     return 0;
 }
