@@ -430,6 +430,23 @@ static int try_generate(Puzzle *p, int size, int nc)
             color++;
         }
 
+        /* Reject if the filled solution grid contains any 2×2 same-color block.
+         * subpath_has_2x2() only catches tight path spirals; it misses cases
+         * like a path that fills two adjacent columns (a U-shape), which creates
+         * many 2×2 blocks in the grid despite never having 4 consecutive path
+         * cells in a 2×2 bounding box. */
+        int grid_ok = 1;
+        for (int r = 0; r + 1 < size && grid_ok; r++) {
+            for (int c = 0; c + 1 < size && grid_ok; c++) {
+                int v = p->solution[r][c];
+                if (v == p->solution[r][c+1] &&
+                    v == p->solution[r+1][c]  &&
+                    v == p->solution[r+1][c+1])
+                    grid_ok = 0;
+            }
+        }
+        if (!grid_ok) continue;
+
         return 1;
     }
 
