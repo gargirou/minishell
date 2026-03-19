@@ -1,7 +1,7 @@
 /*
  * puzzle.h — Free Flow / Numberlink puzzle data structures and interface
  *
- * A Numberlink (Flow Free) puzzle is an n×n grid containing k pairs of
+ * A Numberlink (Flow Free) puzzle is an r×c grid containing k pairs of
  * colored endpoints.  The solver must connect each pair with a continuous
  * non-branching path such that:
  *   • No two paths cross or share a cell.
@@ -31,12 +31,14 @@
 #define PUZZLE_H
 
 /* ── Compile-time limits ───────────────────────────────────────────────── */
-#define MAX_SIZE    15   /* maximum grid dimension (15×15 = 225 cells)      */
+#define MAX_ROWS    15   /* maximum grid rows                               */
+#define MAX_COLS    15   /* maximum grid columns                            */
 #define MAX_COLORS  14   /* maximum number of color pairs                   */
 
 /* ── Core data structure ───────────────────────────────────────────────── */
 typedef struct {
-    int size;        /* grid dimension (size × size)                        */
+    int rows;        /* grid row count                                      */
+    int cols;        /* grid column count                                   */
     int num_colors;  /* number of color pairs                               */
 
     /*
@@ -46,7 +48,7 @@ typedef struct {
      * Only the two endpoints per color appear here; interior path cells
      * are 0 in the puzzle but filled in the solution.
      */
-    int grid[MAX_SIZE][MAX_SIZE];
+    int grid[MAX_ROWS][MAX_COLS];
 
     /*
      * solution[r][c]:
@@ -54,7 +56,7 @@ typedef struct {
      *   solution produced by the generator.  The solver may find a
      *   different (equally valid) solution.
      */
-    int solution[MAX_SIZE][MAX_SIZE];
+    int solution[MAX_ROWS][MAX_COLS];
 } Puzzle;
 
 /* ── Generator ─────────────────────────────────────────────────────────── */
@@ -62,18 +64,20 @@ typedef struct {
 /*
  * generate_puzzle()
  *
- * Fill *p with a randomly generated Numberlink puzzle of the given size
- * and number of colors.  Uses the growing-snakes algorithm with retries.
+ * Fill *p with a randomly generated Numberlink puzzle of the given
+ * dimensions and number of colors.  Uses the growing-snakes algorithm
+ * with retries.
  *
  * Returns 1 on success, 0 if no valid puzzle could be produced (e.g.,
  * num_colors is too large for the grid).
  *
  * Preconditions:
- *   2 ≤ size       ≤ MAX_SIZE
+ *   2 ≤ rows       ≤ MAX_ROWS
+ *   2 ≤ cols       ≤ MAX_COLS
  *   2 ≤ num_colors ≤ MAX_COLORS
- *   num_colors * 2 ≤ size * size
+ *   num_colors * 2 ≤ rows * cols
  */
-int generate_puzzle(Puzzle *p, int size, int num_colors);
+int generate_puzzle(Puzzle *p, int rows, int cols, int num_colors);
 
 /* ── Solver ────────────────────────────────────────────────────────────── */
 
@@ -85,7 +89,7 @@ int generate_puzzle(Puzzle *p, int size, int num_colors);
  *
  * Returns 1 if a solution was found, 0 if the puzzle is unsolvable.
  */
-int solve_puzzle(const Puzzle *p, int out[MAX_SIZE][MAX_SIZE]);
+int solve_puzzle(const Puzzle *p, int out[MAX_ROWS][MAX_COLS]);
 
 /*
  * count_solutions()
@@ -139,6 +143,6 @@ void print_puzzle(const Puzzle *p);
  * Print a fully colored solution grid to stdout.
  * Endpoint cells are shown as bold letters; path cells as '·'.
  */
-void print_solution(const Puzzle *p, const int sol[MAX_SIZE][MAX_SIZE]);
+void print_solution(const Puzzle *p, const int sol[MAX_ROWS][MAX_COLS]);
 
 #endif /* PUZZLE_H */

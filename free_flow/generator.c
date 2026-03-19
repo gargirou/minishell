@@ -4,16 +4,15 @@
  * Algorithm: "Hamiltonian Path + Split" (solution-first, 2×2-free by design)
  * ──────────────────────────────────────────────────────────────────────────
  * Phase 1 — Hamiltonian path
- *   Find a random Hamiltonian path through all n×n cells using a DFS guided
+ *   Find a random Hamiltonian path through all r×c cells using a DFS guided
  *   by Warnsdorff's heuristic (always try the neighbor with fewest onward
  *   moves first).  Random tie-breaking gives variety.
  *
  * Phase 2 — Split
  *   Randomly choose (num_colors - 1) split points in the path to divide it
  *   into num_colors sub-paths, each at least 2 cells long.
- *   Reject splits where any sub-path visits 4 consecutive cells that form
- *   a 2×2 square (same-color block violation).  Retry with different split
- *   points up to MAX_SPLIT_TRIES times.
+ *   Reject splits where the filled solution grid contains a 2×2 same-color
+ *   block.  Retry with different split points up to MAX_SPLIT_TRIES times.
  *
  * Phase 3 — Build puzzle
  *   Each sub-path becomes one color.  The first and last cell of each
@@ -42,8 +41,8 @@
 #define MAX_SPLIT_TRIES    5000    /* inner split-search limit               */
 /*
  * Warnsdorff's heuristic almost always finds a Hamiltonian path with zero
- * backtracking (O(n²) steps).  If we exceed n² * 4 nodes, something went
- * wrong; abort and retry from a different start.
+ * backtracking (O(n²) steps).  If we exceed rows*cols * 4 nodes, something
+ * went wrong; abort and retry from a different start.
  */
 #define HAM_NODE_BUDGET    2000L   /* DFS node budget per attempt            */
 
@@ -76,12 +75,13 @@ static void shuffle(int *arr, int n)
  * Count unvisited neighbors of (r,c) — the Warnsdorff "degree".
  * Lower degree = more constrained = try first.
  */
-static int warnsdorff_degree(int vis[MAX_SIZE][MAX_SIZE], int size, int r, int c)
+static int warnsdorff_degree(int vis[MAX_ROWS][MAX_COLS],
+                              int rows, int cols, int r, int c)
 {
     int deg = 0;
     for (int d = 0; d < 4; d++) {
         int nr = r + DR[d], nc = c + DC[d];
-        if (nr >= 0 && nr < size && nc >= 0 && nc < size && !vis[nr][nc])
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !vis[nr][nc])
             deg++;
     }
     return deg;
@@ -92,8 +92,8 @@ static int warnsdorff_degree(int vis[MAX_SIZE][MAX_SIZE], int size, int r, int c
 static long g_ham_nodes;
 
 static int dfs_hamiltonian(int path_r[], int path_c[],
-                            int vis[MAX_SIZE][MAX_SIZE],
-                            int size, int step, int total)
+                            int vis[MAX_ROWS][MAX_COLS],
+                            int rows, int cols, int step, int total)
 {
     if (step == total) return 1;
     if (++g_ham_nodes > HAM_NODE_BUDGET) return 0;
@@ -104,10 +104,10 @@ static int dfs_hamiltonian(int path_r[], int path_c[],
     int nrs[4], ncs[4], degs[4], nn = 0;
     for (int d = 0; d < 4; d++) {
         int nr = cr + DR[d], nc = cc + DC[d];
-        if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
         if (vis[nr][nc]) continue;
         nrs[nn] = nr; ncs[nn] = nc;
-        degs[nn] = warnsdorff_degree(vis, size, nr, nc);
+        degs[nn] = warnsdorff_degree(vis, rows, cols, nr, nc);
         nn++;
     }
     if (nn == 0) return 0;
@@ -138,7 +138,7 @@ static int dfs_hamiltonian(int path_r[], int path_c[],
         path_c[step] = nc;
         vis[nr][nc] = 1;
 
-        if (dfs_hamiltonian(path_r, path_c, vis, size, step + 1, total))
+        if (dfs_hamiltonian(path_r, path_c, vis, rows, cols, step + 1, total))
             return 1;
 
         vis[nr][nc] = 0;
@@ -152,24 +152,24 @@ static int dfs_hamiltonian(int path_r[], int path_c[],
  * Find a Hamiltonian path starting from a random cell.
  * Returns 1 on success; path_r[]/path_c[] contain the ordered cells.
  */
-static int find_hamiltonian(int path_r[], int path_c[], int size)
+static int find_hamiltonian(int path_r[], int path_c[], int rows, int cols)
 {
-    int total = size * size;
+    int total = rows * cols;
 
     /* Random starting cell */
-    int sr = rand() % size, sc = rand() % size;
+    int sr = rand() % rows, sc = rand() % cols;
 
-    int vis[MAX_SIZE][MAX_SIZE];
+    int vis[MAX_ROWS][MAX_COLS];
     memset(vis, 0, sizeof(vis));
 
     path_r[0] = sr; path_c[0] = sc;
     vis[sr][sc] = 1;
 
     g_ham_nodes = 0;
-    return dfs_hamiltonian(path_r, path_c, vis, size, 1, total);
+    return dfs_hamiltonian(path_r, path_c, vis, rows, cols, 1, total);
 }
 
-/* ── 2×2 check for split sub-paths ────────────────────────────────────── */
+/* ── 2×2 check for sub-paths ───────────────────────────────────────────── */
 
 /*
  * subpath_has_2x2()
@@ -177,25 +177,16 @@ static int find_hamiltonian(int path_r[], int path_c[], int size)
  * Returns 1 if consecutive cells [start..end) in the Hamiltonian path
  * contain a "square": three consecutive steps that together with the
  * first cell form a 2×2 block.
- *
- * A 2×2 occurs when path[i], path[i+1], path[i+2], path[i+3] (for any i)
- * are the four corners of a unit square (in any order that is a valid path).
- * This happens exactly when the direction from i→i+1 and i+2→i+3 are
- * opposite, and the direction i+1→i+2 connects them on the side.
- * Equivalently: the bounding box of any 4 consecutive cells is 2×2 and
- * all four cells are in distinct corners of that box.
  */
 static int subpath_has_2x2(const int path_r[], const int path_c[],
                             int start, int end)
 {
-    /* Need at least 4 cells to form a 2×2 */
     for (int i = start; i + 3 < end; i++) {
         int r0 = path_r[i],   c0 = path_c[i];
         int r1 = path_r[i+1], c1 = path_c[i+1];
         int r2 = path_r[i+2], c2 = path_c[i+2];
         int r3 = path_r[i+3], c3 = path_c[i+3];
 
-        /* Bounding box of the four points */
         int rmin = r0, rmax = r0, cmin = c0, cmax = c0;
         rmin = r1 < rmin ? r1 : rmin; rmax = r1 > rmax ? r1 : rmax;
         rmin = r2 < rmin ? r2 : rmin; rmax = r2 > rmax ? r2 : rmax;
@@ -204,22 +195,12 @@ static int subpath_has_2x2(const int path_r[], const int path_c[],
         cmin = c2 < cmin ? c2 : cmin; cmax = c2 > cmax ? c2 : cmax;
         cmin = c3 < cmin ? c3 : cmin; cmax = c3 > cmax ? c3 : cmax;
 
-        /* A 2×2 square has a 2×2 bounding box */
         if (rmax - rmin == 1 && cmax - cmin == 1)
             return 1;
     }
     return 0;
 }
 
-/*
- * split_valid()
- *
- * Given split points cuts[0..nc-2] (indices in the path where sub-paths
- * end), check that no sub-path has an internal 2×2 pattern.
- *
- * cuts[] has (nc-1) entries.  Sub-path i covers [starts[i], cuts[i]).
- * Sub-path nc-1 covers [cuts[nc-2], total).
- */
 static int split_valid(const int path_r[], const int path_c[],
                         const int cuts[], int nc, int total)
 {
@@ -268,114 +249,71 @@ static int find_bad_positions(const int path_r[], const int path_c[],
  *
  * Given bad positions bad[0..nb-1] in the Hamiltonian path, compute the
  * minimum set of split points that "pierce" every bad group.
- *
- * A bad group at index i requires a split at some k ∈ [i+1, i+3]
- * (i.e., within the 4 cells of the group, but NOT at the endpoints,
- * since a split at k means the first sub-path ends before index k).
- *
- * Greedy piercing (scan left-to-right by right endpoint):
- *   For each unpierced group, place a split as far right as allowed
- *   (= min(i+3, total-2)) to cover as many future groups as possible.
- *
- * Additionally, each split must leave the minimum sub-path length of 2.
- * Returns the number of greedy splits placed in splits[], or -1 if
- * more than (nc-1) splits are needed (infeasible for this path).
- *
- * To introduce randomness (for puzzle variety), we randomly jitter the
- * split position within the valid range [i+1, i+3] when the greedy
- * choice is not forced.
  */
 static int greedy_splits(const int bad[], int nb, int nc, int total,
                           int splits[])
 {
-    int ns = 0;         /* number of splits placed so far */
-    int last_split = 0; /* right boundary of previous sub-path (= prev cut) */
-    int gi = 0;         /* index into bad[] */
+    int ns = 0;
+    int last_split = 0;
+    int gi = 0;
 
     while (gi < nb) {
-        int i = bad[gi]; /* bad position: path[i..i+3] is a 2×2 */
+        int i = bad[gi];
 
-        /* Range for the split: [i+1, i+3], clamped to valid positions */
         int lo = i + 1;
         int hi = i + 3;
-        if (hi > total - 3) hi = total - 3; /* keep last sub-path ≥ 3 cells */
-        if (lo > hi) return -1; /* can't fix this bad group */
+        if (hi > total - 3) hi = total - 3;
+        if (lo > hi) return -1;
 
-        /* Clamp to ensure the new sub-path has ≥ 3 cells */
         if (lo < last_split + 3) lo = last_split + 3;
         if (lo > hi) return -1;
 
-        /* Check budget */
         if (ns >= nc - 1) return -1;
 
-        /* Place split: random position in [lo, hi] for variety */
         int k = lo + rand() % (hi - lo + 1);
         splits[ns++] = k;
         last_split = k;
 
-        /* Skip all bad groups that this split already covers */
         while (gi < nb && bad[gi] < k) gi++;
     }
 
-    return ns; /* number of greedy splits used */
+    return ns;
 }
 
-static int try_generate(Puzzle *p, int size, int nc)
+static int try_generate(Puzzle *p, int rows, int cols, int nc)
 {
-    int total = size * size;
-    int path_r[MAX_SIZE * MAX_SIZE], path_c[MAX_SIZE * MAX_SIZE];
+    int total = rows * cols;
+    int path_r[MAX_ROWS * MAX_COLS], path_c[MAX_ROWS * MAX_COLS];
 
     /* Phase 1: Find a Hamiltonian path */
-    if (!find_hamiltonian(path_r, path_c, size))
+    if (!find_hamiltonian(path_r, path_c, rows, cols))
         return 0;
 
     /* Phase 2: Identify 2×2 bad positions */
-    int bad[MAX_SIZE * MAX_SIZE];
+    int bad[MAX_ROWS * MAX_COLS];
     int nb = find_bad_positions(path_r, path_c, total, bad);
 
-    /* We need at least nb greedy splits to fix all bad positions */
-    if (nb > nc - 1) {
-        /*
-         * More bad positions than available cuts — impossible to split.
-         * (Some paths are unsplittable for this nc; retry with a new path.)
-         */
+    if (nb > nc - 1)
         return 0;
-    }
 
     /* Phase 3: Build cuts[] = nc-1 split points */
-    /*
-     * Strategy:
-     *   a) Compute greedy splits to fix all bad positions  (ns splits)
-     *   b) Insert (nc-1 - ns) additional splits at random valid positions
-     *      to create the required number of sub-paths.
-     *   c) Verify all sub-paths have ≥ 2 cells and no 2×2 blocks.
-     *
-     * Retry up to MAX_SPLIT_TRIES times (for the random extras).
-     */
     for (int attempt = 0; attempt < MAX_SPLIT_TRIES; attempt++) {
 
-        int gsplits[MAX_COLORS];  /* greedy split positions */
+        int gsplits[MAX_COLORS];
         int ns = greedy_splits(bad, nb, nc, total, gsplits);
-        if (ns < 0) return 0; /* infeasible */
+        if (ns < 0) return 0;
 
         int extra_needed = (nc - 1) - ns;
 
-        /*
-         * Build pool of valid extra split positions: all positions in
-         * [2, total-2] not already in gsplits[] and not adjacent to a
-         * gsplit position (to maintain minimum sub-path length).
-         */
         int cuts[MAX_COLORS];
-        /* Copy greedy splits */
         for (int i = 0; i < ns; i++) cuts[i] = gsplits[i];
 
         if (extra_needed > 0) {
-            /* Mark used positions */
-            int used[MAX_SIZE * MAX_SIZE];
+            int used[MAX_ROWS * MAX_COLS];
             memset(used, 0, total * sizeof(int));
             for (int i = 0; i < ns; i++) used[gsplits[i]] = 1;
 
-            int pool[MAX_SIZE * MAX_SIZE], npool = 0;
+            int pool[MAX_ROWS * MAX_COLS], npool = 0;
             for (int i = 3; i <= total - 3; i++)
                 if (!used[i]) pool[npool++] = i;
 
@@ -394,14 +332,11 @@ static int try_generate(Puzzle *p, int size, int nc)
             cuts[j+1] = key;
         }
 
-        /* Validate minimum length (≥ 3 per sub-path) and non-adjacent endpoints.
-         * Even-length sub-paths of length >= 4 can still produce adjacent
-         * endpoints (e.g. A→B→C→D forming a U-shape), so we explicitly check. */
+        /* Validate minimum length and non-adjacent endpoints */
         int ok = 1, prev = 0;
         for (int i = 0; i <= ncuts && ok; i++) {
             int end = (i < ncuts) ? cuts[i] : total;
             if (end - prev < 3) { ok = 0; break; }
-            /* Check that endpoints of this sub-path are not grid-adjacent */
             int r0 = path_r[prev], c0 = path_c[prev];
             int r1 = path_r[end-1], c1 = path_c[end-1];
             if (abs(r0-r1) + abs(c0-c1) == 1) ok = 0;
@@ -409,12 +344,13 @@ static int try_generate(Puzzle *p, int size, int nc)
         }
         if (!ok) continue;
 
-        /* Final 2×2 check (greedy handles bad positions, but double-check) */
+        /* Final path-level 2×2 check */
         if (!split_valid(path_r, path_c, cuts, nc, total))
             continue;
 
         /* Valid split found — build the puzzle */
-        p->size       = size;
+        p->rows       = rows;
+        p->cols       = cols;
         p->num_colors = nc;
         memset(p->grid,     0, sizeof(p->grid));
         memset(p->solution, 0, sizeof(p->solution));
@@ -431,13 +367,12 @@ static int try_generate(Puzzle *p, int size, int nc)
         }
 
         /* Reject if the filled solution grid contains any 2×2 same-color block.
-         * subpath_has_2x2() only catches tight path spirals; it misses cases
-         * like a path that fills two adjacent columns (a U-shape), which creates
-         * many 2×2 blocks in the grid despite never having 4 consecutive path
-         * cells in a 2×2 bounding box. */
+         * subpath_has_2x2() misses paths that fill two adjacent columns/rows
+         * (a U-shape), which create 2×2 blocks in the grid without any 4
+         * consecutive path cells fitting in a 2×2 bounding box. */
         int grid_ok = 1;
-        for (int r = 0; r + 1 < size && grid_ok; r++) {
-            for (int c = 0; c + 1 < size && grid_ok; c++) {
+        for (int r = 0; r + 1 < rows && grid_ok; r++) {
+            for (int c = 0; c + 1 < cols && grid_ok; c++) {
                 int v = p->solution[r][c];
                 if (v == p->solution[r][c+1] &&
                     v == p->solution[r+1][c]  &&
@@ -450,21 +385,21 @@ static int try_generate(Puzzle *p, int size, int nc)
         return 1;
     }
 
-    return 0; /* No valid split found */
+    return 0;
 }
 
 /* ── Public interface ──────────────────────────────────────────────────── */
 
-int generate_puzzle(Puzzle *p, int size, int num_colors)
+int generate_puzzle(Puzzle *p, int rows, int cols, int num_colors)
 {
-    /* Bounds checking */
-    if (size < 2 || size > MAX_SIZE)               return 0;
+    if (rows < 2 || rows > MAX_ROWS)               return 0;
+    if (cols < 2 || cols > MAX_COLS)               return 0;
     if (num_colors < 2 || num_colors > MAX_COLORS) return 0;
-    if (num_colors * 2 > size * size)              return 0;
+    if (num_colors * 2 > rows * cols)              return 0;
 
     for (int attempt = 0; attempt < MAX_GEN_ATTEMPTS; attempt++) {
-        if (try_generate(p, size, num_colors))
+        if (try_generate(p, rows, cols, num_colors))
             return 1;
     }
-    return 0; /* Exhausted retries */
+    return 0;
 }

@@ -1,10 +1,12 @@
 /*
  * main.c — Free Flow / Numberlink puzzle generator and validator
  *
- * Usage:  free_flow [-s SIZE] [-c COLORS] [-S SEED] [-u] [-n]
+ * Usage:  free_flow [-s SIZE] [-r ROWS] [-W COLS] [-c COLORS] [-S SEED] [-u] [-n]
  *
- *   -s SIZE    Grid dimension (2–12, default 7)
- *   -c COLORS  Number of color pairs (2–14, default size-1)
+ *   -s SIZE    Square grid (SIZE×SIZE), default 7
+ *   -r ROWS    Number of rows (overrides -s)
+ *   -W COLS    Number of columns (overrides -s)
+ *   -c COLORS  Number of color pairs (2–14, default auto)
  *   -S SEED    Random seed (default: time-based)
  *   -u         Require a unique solution (retry until found)
  *   -n         Disable ANSI colors (plain ASCII output)
@@ -20,7 +22,7 @@
  * ───────────────────
  * Colors 1–14 are mapped to ANSI foreground color codes.
  * Endpoint cells are shown as bold capital letters (R G Y B M C …).
- * Interior path cells are shown as a middle-dot '·' (or '+' in plain mode).
+ * Interior path cells are shown as a middle-dot '·' (or lowercase in plain mode).
  */
 
 #include "puzzle.h"
@@ -94,17 +96,17 @@ static void print_empty(void)
 
 /* ── Grid border helpers ────────────────────────────────────────────────── */
 
-static void print_hline(int size)
+static void print_hline(int cols)
 {
     printf("  +");
-    for (int c = 0; c < size; c++) printf("--");
+    for (int c = 0; c < cols; c++) printf("--");
     printf("-+\n");
 }
 
-static void print_col_numbers(int size)
+static void print_col_numbers(int cols)
 {
     printf("   ");
-    for (int c = 0; c < size; c++) printf(" %d", c % 10);
+    for (int c = 0; c < cols; c++) printf(" %d", c % 10);
     printf("\n");
 }
 
@@ -112,13 +114,12 @@ static void print_col_numbers(int size)
 
 void print_puzzle(const Puzzle *p)
 {
-    int n = p->size;
     printf("Puzzle (%dx%d, %d color%s):\n",
-           n, n, p->num_colors, p->num_colors == 1 ? "" : "s");
-    print_hline(n);
-    for (int r = 0; r < n; r++) {
+           p->rows, p->cols, p->num_colors, p->num_colors == 1 ? "" : "s");
+    print_hline(p->cols);
+    for (int r = 0; r < p->rows; r++) {
         printf("%d |", r % 10);
-        for (int c = 0; c < n; c++) {
+        for (int c = 0; c < p->cols; c++) {
             int col = p->grid[r][c];
             printf(" ");
             if (col > 0) print_endpoint(col);
@@ -126,19 +127,18 @@ void print_puzzle(const Puzzle *p)
         }
         printf(" |\n");
     }
-    print_hline(n);
-    print_col_numbers(n);
+    print_hline(p->cols);
+    print_col_numbers(p->cols);
     printf("\n");
 }
 
-void print_solution(const Puzzle *p, const int sol[MAX_SIZE][MAX_SIZE])
+void print_solution(const Puzzle *p, const int sol[MAX_ROWS][MAX_COLS])
 {
-    int n = p->size;
     printf("Solution:\n");
-    print_hline(n);
-    for (int r = 0; r < n; r++) {
+    print_hline(p->cols);
+    for (int r = 0; r < p->rows; r++) {
         printf("%d |", r % 10);
-        for (int c = 0; c < n; c++) {
+        for (int c = 0; c < p->cols; c++) {
             int col = sol[r][c];
             printf(" ");
             if (p->grid[r][c] > 0)  print_endpoint(col);
@@ -146,8 +146,8 @@ void print_solution(const Puzzle *p, const int sol[MAX_SIZE][MAX_SIZE])
         }
         printf(" |\n");
     }
-    print_hline(n);
-    print_col_numbers(n);
+    print_hline(p->cols);
+    print_col_numbers(p->cols);
     printf("\n");
 }
 
@@ -171,10 +171,12 @@ static void print_color_key(int num_colors)
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s [-s SIZE] [-c COLORS] [-S SEED] [-u] [-n] [-h]\n"
+        "Usage: %s [-s SIZE] [-r ROWS] [-W COLS] [-c COLORS] [-S SEED] [-u] [-n] [-h]\n"
         "\n"
-        "  -s SIZE    Grid dimension (2-%d, default 7)\n"
-        "  -c COLORS  Number of color pairs (2-%d, default size-1)\n"
+        "  -s SIZE    Square grid SIZE×SIZE (2-%d, default 7)\n"
+        "  -r ROWS    Number of rows (2-%d, overrides -s)\n"
+        "  -W COLS    Number of columns (2-%d, overrides -s)\n"
+        "  -c COLORS  Number of color pairs (2-%d, default auto)\n"
         "  -S SEED    Random seed (default: time-based)\n"
         "  -u         Require unique solution (retry until found)\n"
         "  -n         Disable ANSI colors (plain ASCII)\n"
@@ -184,33 +186,38 @@ static void usage(const char *prog)
         "Rules (Numberlink / Flow Free):\n"
         "  Connect each pair of matching colored dots with a path.\n"
         "  Paths may not cross. Every cell must be filled.\n",
-        prog, MAX_SIZE, MAX_COLORS);
+        prog, MAX_ROWS, MAX_ROWS, MAX_COLS, MAX_COLORS);
 }
 
 /* ── main ──────────────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[])
 {
-    int  size           = 7;
+    int  rows           = 7;
+    int  cols           = 7;
     int  num_colors     = -1;     /* -1 = auto-compute */
     int  require_unique = 0;
     unsigned int seed   = (unsigned int)time(NULL);
 
     /* ── Parse arguments ─────────────────────────────────────────────── */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
-            size = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc)
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            rows = cols = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
+            rows = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-W") == 0 && i + 1 < argc) {
+            cols = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
             num_colors = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
+        } else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc) {
             seed = (unsigned int)atoi(argv[++i]);
-        else if (strcmp(argv[i], "-u") == 0)
+        } else if (strcmp(argv[i], "-u") == 0) {
             require_unique = 1;
-        else if (strcmp(argv[i], "-n") == 0)
+        } else if (strcmp(argv[i], "-n") == 0) {
             g_use_color = 0;
-        else if (strcmp(argv[i], "-C") == 0)
+        } else if (strcmp(argv[i], "-C") == 0) {
             g_use_color = 2; /* force color even when not a TTY */
-        else if (strcmp(argv[i], "-h") == 0) {
+        } else if (strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;
         } else {
@@ -224,26 +231,31 @@ int main(int argc, char *argv[])
     if (g_use_color == 1 && !isatty(STDOUT_FILENO))
         g_use_color = 0;
 
-    /* Auto-compute num_colors if not given */
+    /* Auto-compute num_colors if not given: use smaller dimension - 1 */
     if (num_colors < 0) {
-        num_colors = size - 1;
+        int min_dim = rows < cols ? rows : cols;
+        num_colors = min_dim - 1;
         if (num_colors > MAX_COLORS) num_colors = MAX_COLORS;
         if (num_colors < 2)          num_colors = 2;
     }
 
     /* Basic validation */
-    if (size < 2 || size > MAX_SIZE) {
-        fprintf(stderr, "Error: size must be 2-%d\n", MAX_SIZE);
+    if (rows < 2 || rows > MAX_ROWS) {
+        fprintf(stderr, "Error: rows must be 2-%d\n", MAX_ROWS);
+        return 1;
+    }
+    if (cols < 2 || cols > MAX_COLS) {
+        fprintf(stderr, "Error: cols must be 2-%d\n", MAX_COLS);
         return 1;
     }
     if (num_colors < 2 || num_colors > MAX_COLORS) {
         fprintf(stderr, "Error: colors must be 2-%d\n", MAX_COLORS);
         return 1;
     }
-    if (num_colors * 2 > size * size) {
+    if (num_colors * 2 > rows * cols) {
         fprintf(stderr,
                 "Error: %d colors require at least %d cells (%dx%d has %d)\n",
-                num_colors, num_colors * 2, size, size, size * size);
+                num_colors, num_colors * 2, rows, cols, rows * cols);
         return 1;
     }
 
@@ -251,7 +263,7 @@ int main(int argc, char *argv[])
     printf("Free Flow / Numberlink Generator\n");
     printf("═════════════════════════════════\n");
     printf("Seed: %u  |  Grid: %dx%d  |  Colors: %d\n\n",
-           seed, size, size, num_colors);
+           seed, rows, cols, num_colors);
 
     /* ── Generate puzzle (with optional uniqueness requirement) ────────── */
     Puzzle p;
@@ -260,27 +272,16 @@ int main(int argc, char *argv[])
 
     do {
         attempts++;
-        if (!generate_puzzle(&p, size, num_colors)) {
+        if (!generate_puzzle(&p, rows, cols, num_colors)) {
             fprintf(stderr,
                     "Error: generator exhausted retries (grid may be too "
                     "constrained for %d colors on a %dx%d board).\n",
-                    num_colors, size, size);
+                    num_colors, rows, cols);
             return 1;
         }
 
-        /* Structural sanity check */
         if (!validate_puzzle(&p)) continue;
 
-        /*
-         * The generator's Hamiltonian-path-split algorithm guarantees at
-         * least one valid (fully-filled, no-2×2) solution: p->solution.
-         * We do NOT need to run the full backtracking solver just to confirm
-         * solvability for the basic case.
-         *
-         * For uniqueness (-u): run count_solutions(2) to check for multiple
-         * solutions.  This may be slow on very large grids; the outer retry
-         * limit naturally caps the total time.
-         */
         if (require_unique) {
             int nsols = count_solutions(&p, 2);
             if (nsols >= 2) {
@@ -293,10 +294,6 @@ int main(int argc, char *argv[])
             }
         }
 
-        /*
-         * Topological validity: if all pairs can be connected WITHOUT filling
-         * every cell, the puzzle is invalid (trivially solvable shortcuts exist).
-         */
         if (has_unfilled_solution(&p)) {
             if (attempts % 500 == 0) {
                 printf("  [attempt %d: shortcut exists, retrying…]\n", attempts);
@@ -325,22 +322,14 @@ int main(int argc, char *argv[])
     print_puzzle(&p);
 
     /* ── Display solution ───────────────────────────────────────────────── */
-    /*
-     * The generator's known solution (p->solution) is valid by construction
-     * (no 2×2 blocks, all cells filled, all pairs connected).  Display it
-     * directly instead of re-running the expensive backtracking solver.
-     */
     print_solution(&p, p.solution);
 
     /* ── Uniqueness verdict ─────────────────────────────────────────────── */
     if (require_unique) {
         printf("✓ Unique solution — well-formed Numberlink puzzle.\n");
     } else {
-        /*
-         * Run a quick count (cap at 2) to report uniqueness.
-         * Skip this check for large grids where the solver is very slow.
-         */
-        int nsols = (size <= 9) ? count_solutions(&p, 2) : 1;
+        int cells = rows * cols;
+        int nsols = (cells <= 81) ? count_solutions(&p, 2) : 1;
         if (nsols == 1) {
             printf("✓ Unique solution — well-formed Numberlink puzzle.\n");
         } else {

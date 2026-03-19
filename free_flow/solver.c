@@ -52,13 +52,14 @@ static const int DC[4] = {  0,  0, -1,  1 };
 
 /* ── Solver state ──────────────────────────────────────────────────────── */
 typedef struct {
-    int filled[MAX_SIZE][MAX_SIZE]; /* 0 = empty; color = occupied           */
+    int filled[MAX_ROWS][MAX_COLS]; /* 0 = empty; color = occupied           */
     int done   [MAX_COLORS + 1];   /* path complete?                         */
     int front_r[MAX_COLORS + 1];   /* active front position                  */
     int front_c[MAX_COLORS + 1];
     int goal_r [MAX_COLORS + 1];   /* fixed goal position                    */
     int goal_c [MAX_COLORS + 1];
-    int size;
+    int rows;
+    int cols;
     int num_colors;
     int empty_count;               /* cells not yet occupied                 */
 } State;
@@ -66,14 +67,11 @@ typedef struct {
 /* ── Module-level result storage (single-threaded) ─────────────────────── */
 static int  g_nsols;
 static int  g_max_sols;
-static int  g_solution[MAX_SIZE][MAX_SIZE];
+static int  g_solution[MAX_ROWS][MAX_COLS];
 static long g_node_count;
 
 /*
  * Node budget for the has_unfilled_solution() check.
- * Kept intentionally small: an unfilled shortcut, if it exists, is found
- * almost immediately (it requires far fewer nodes than a full solution).
- * If the budget expires without finding one we assume none exists.
  */
 #define UNFILLED_NODE_BUDGET 30000L
 
@@ -91,9 +89,8 @@ static int can_reach(const State *s, int col)
     int fr = s->front_r[col], fc = s->front_c[col];
     int gr = s->goal_r [col], gc = s->goal_c [col];
 
-    /* BFS queue — at most size*size cells */
-    int qr[MAX_SIZE * MAX_SIZE], qc[MAX_SIZE * MAX_SIZE];
-    int vis[MAX_SIZE][MAX_SIZE];
+    int qr[MAX_ROWS * MAX_COLS], qc[MAX_ROWS * MAX_COLS];
+    int vis[MAX_ROWS][MAX_COLS];
     memset(vis, 0, sizeof(vis));
 
     int head = 0, tail = 0;
@@ -104,11 +101,9 @@ static int can_reach(const State *s, int col)
         int cr = qr[head], cc = qc[head]; head++;
         for (int d = 0; d < 4; d++) {
             int nr = cr + DR[d], nc = cc + DC[d];
-            if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+            if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols) continue;
             if (vis[nr][nc]) continue;
-            /* Reached goal */
             if (nr == gr && nc == gc) return 1;
-            /* Traverse empty cells only */
             if (s->filled[nr][nc] == 0) {
                 vis[nr][nc] = 1;
                 qr[tail] = nr; qc[tail] = nc; tail++;
@@ -122,20 +117,18 @@ static int can_reach(const State *s, int col)
  * connectivity_ok()
  *
  * Flood-fill from every incomplete path's front AND goal through empty
- * cells.  If any empty cell is not reached, it will never be filled and
- * the current state cannot lead to a complete solution.
+ * cells.  If any empty cell is not reached, it will never be filled.
  * Returns 1 if all empty cells are reachable, 0 otherwise.
  */
 static int connectivity_ok(const State *s)
 {
-    if (s->empty_count == 0) return 1; /* nothing to check */
+    if (s->empty_count == 0) return 1;
 
-    int vis[MAX_SIZE][MAX_SIZE];
+    int vis[MAX_ROWS][MAX_COLS];
     memset(vis, 0, sizeof(vis));
-    int qr[MAX_SIZE * MAX_SIZE], qc[MAX_SIZE * MAX_SIZE];
+    int qr[MAX_ROWS * MAX_COLS], qc[MAX_ROWS * MAX_COLS];
     int head = 0, tail = 0;
 
-    /* Seed the BFS with all incomplete fronts and goals */
     for (int col = 1; col <= s->num_colors; col++) {
         if (s->done[col]) continue;
 
@@ -154,7 +147,7 @@ static int connectivity_ok(const State *s)
         int cr = qr[head], cc = qc[head]; head++;
         for (int d = 0; d < 4; d++) {
             int nr = cr + DR[d], nc = cc + DC[d];
-            if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+            if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols) continue;
             if (vis[nr][nc]) continue;
             if (s->filled[nr][nc] == 0) {
                 vis[nr][nc] = 1;
@@ -163,9 +156,8 @@ static int connectivity_ok(const State *s)
         }
     }
 
-    /* Every empty cell must have been reached */
-    for (int r = 0; r < s->size; r++)
-        for (int c = 0; c < s->size; c++)
+    for (int r = 0; r < s->rows; r++)
+        for (int c = 0; c < s->cols; c++)
             if (s->filled[r][c] == 0 && !vis[r][c])
                 return 0;
     return 1;
@@ -176,30 +168,21 @@ static int connectivity_ok(const State *s)
  *
  * Returns 1 if placing color col at (r,c) would complete any 2×2 block
  * whose other three cells are already filled with the same color.
- *
- * Why this matters: a 2×2 block of one color always implies the path
- * through that block can be rerouted two ways, giving multiple solutions.
- * Pruning these moves enforces the no-2×2 constraint and is necessary
- * for generating well-formed (uniquely solvable) puzzles.
  */
 static int would_create_2x2(const State *s, int r, int c, int col)
 {
-    /*
-     * The cell (r,c) can be the top-left, top-right, bottom-left or
-     * bottom-right corner of a 2×2 block.  Check all four possibilities.
-     */
     int tops[4][2] = { {r, c}, {r, c-1}, {r-1, c}, {r-1, c-1} };
 
     for (int i = 0; i < 4; i++) {
         int r0 = tops[i][0], c0 = tops[i][1];
-        if (r0 < 0 || r0 + 1 >= s->size) continue;
-        if (c0 < 0 || c0 + 1 >= s->size) continue;
+        if (r0 < 0 || r0 + 1 >= s->rows) continue;
+        if (c0 < 0 || c0 + 1 >= s->cols) continue;
 
         int all_same = 1;
         for (int dr = 0; dr <= 1 && all_same; dr++) {
             for (int dc = 0; dc <= 1 && all_same; dc++) {
                 int nr = r0 + dr, nc = c0 + dc;
-                if (nr == r && nc == c) continue; /* cell being placed */
+                if (nr == r && nc == c) continue;
                 if (s->filled[nr][nc] != col) all_same = 0;
             }
         }
@@ -224,11 +207,6 @@ static int is_feasible(const State *s)
 
 /* ── MRV color selector ────────────────────────────────────────────────── */
 
-/*
- * count_moves()
- *
- * Count valid moves for color col's front: empty cells and the goal.
- */
 static int count_moves(const State *s, int col)
 {
     int fr = s->front_r[col], fc = s->front_c[col];
@@ -236,23 +214,17 @@ static int count_moves(const State *s, int col)
     int moves = 0;
     for (int d = 0; d < 4; d++) {
         int nr = fr + DR[d], nc = fc + DC[d];
-        if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+        if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols) continue;
         if (s->filled[nr][nc] == 0 || (nr == gr && nc == gc))
             moves++;
     }
     return moves;
 }
 
-/*
- * pick_color()
- *
- * Return the incomplete color with the fewest valid moves (MRV).
- * Returns -1 if all colors are done.
- */
 static int pick_color(const State *s)
 {
     int best_col = -1;
-    int best_m   = MAX_SIZE * MAX_SIZE + 1;
+    int best_m   = MAX_ROWS * MAX_COLS + 1;
 
     for (int col = 1; col <= s->num_colors; col++) {
         if (s->done[col]) continue;
@@ -260,7 +232,7 @@ static int pick_color(const State *s)
         if (m < best_m) {
             best_m   = m;
             best_col = col;
-            if (m == 0) break; /* most constrained possible */
+            if (m == 0) break;
         }
     }
     return best_col;
@@ -273,14 +245,6 @@ static void backtrack(State *s)
     if (g_nsols >= g_max_sols)      return;
     if (++g_node_count > MAX_NODES) return;
 
-    /* ── Check terminal condition ──────────────────────────────────────── */
-    /*
-     * Check if all cells are filled AND all paths are complete.
-     * NOTE: "complete" moves (front → goal) do NOT consume empty cells
-     * (the goal is a pre-filled endpoint), so we must NOT return early
-     * when empty_count == 0 if paths are still unfinished — those paths
-     * may still be one step away from their goals.
-     */
     {
         int all_done = 1;
         for (int col = 1; col <= s->num_colors; col++)
@@ -291,49 +255,33 @@ static void backtrack(State *s)
                 memcpy(g_solution, s->filled, sizeof(s->filled));
             return;
         }
-        /* all_done but cells remain: provably unsolvable, prune */
         if (all_done) return;
     }
 
-    /* ── Feasibility pruning ───────────────────────────────────────────── */
     if (!is_feasible(s)) return;
 
-    /* ── Pick most-constrained color ──────────────────────────────────── */
     int col = pick_color(s);
-    if (col < 0) {
-        /*
-         * All paths done but empty cells remain — this state is already
-         * pruned above; reaching here means a logic error.
-         */
-        return;
-    }
+    if (col < 0) return;
 
     int fr = s->front_r[col], fc = s->front_c[col];
     int gr = s->goal_r [col], gc = s->goal_c [col];
 
-    /* ── Try each valid direction ──────────────────────────────────────── */
     for (int d = 0; d < 4; d++) {
         int nr = fr + DR[d], nc = fc + DC[d];
-        if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+        if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols) continue;
 
         if (nr == gr && nc == gc) {
-            /*
-             * The front is adjacent to the goal: complete this path.
-             * The goal cell is already filled; only update done[] and front.
-             */
             s->done[col]    = 1;
             s->front_r[col] = nr;
             s->front_c[col] = nc;
 
             backtrack(s);
 
-            /* Restore */
             s->done[col]    = 0;
             s->front_r[col] = fr;
             s->front_c[col] = fc;
 
         } else if (s->filled[nr][nc] == 0) {
-            /* Extend path into an empty cell — skip if it would form a 2×2 */
             if (would_create_2x2(s, nr, nc, col)) continue;
 
             s->filled[nr][nc] = col;
@@ -343,7 +291,6 @@ static void backtrack(State *s)
 
             backtrack(s);
 
-            /* Restore */
             s->filled[nr][nc] = 0;
             s->front_r[col]   = fr;
             s->front_c[col]   = fc;
@@ -358,27 +305,22 @@ static int run_solver(const Puzzle *p, int max_sols)
 {
     State s;
     memset(&s, 0, sizeof(s));
-    s.size       = p->size;
+    s.rows       = p->rows;
+    s.cols       = p->cols;
     s.num_colors = p->num_colors;
 
-    /* Copy endpoint clues into filled[][] */
     int empty = 0;
-    for (int r = 0; r < p->size; r++) {
-        for (int c = 0; c < p->size; c++) {
+    for (int r = 0; r < p->rows; r++) {
+        for (int c = 0; c < p->cols; c++) {
             s.filled[r][c] = p->grid[r][c];
             if (p->grid[r][c] == 0) empty++;
         }
     }
     s.empty_count = empty;
 
-    /*
-     * Identify the two endpoints for each color.
-     * front = first endpoint found (in row-major order)
-     * goal  = second endpoint found
-     */
     int ep_found[MAX_COLORS + 1] = {0};
-    for (int r = 0; r < p->size; r++) {
-        for (int c = 0; c < p->size; c++) {
+    for (int r = 0; r < p->rows; r++) {
+        for (int c = 0; c < p->cols; c++) {
             int col = p->grid[r][c];
             if (!col) continue;
             if (ep_found[col] == 0) {
@@ -401,32 +343,16 @@ static int run_solver(const Puzzle *p, int max_sols)
 
 /* ── Unfilled-solution detector ────────────────────────────────────────── */
 
-/*
- * backtrack_nofill()
- *
- * Like backtrack() but the terminal condition is simply "all pairs
- * connected" — empty_count is irrelevant.  We record a hit only when
- * empty_count > 0 (cells left uncovered), since that is the degenerate
- * case we are testing for.
- *
- * Differences from backtrack():
- *   • Terminal: all_done (not all_done && empty_count == 0).
- *   • No global connectivity check (we don't need all cells reachable).
- *   • No 2×2 pruning (we want to detect ANY shortcut, even ugly ones).
- * Per-color BFS reachability is still enforced (paths must reach goals).
- */
 static void backtrack_nofill(State *s)
 {
     if (g_nsols >= g_max_sols)              return;
     if (++g_node_count > UNFILLED_NODE_BUDGET) return;
 
-    /* Terminal: all pairs done */
     int all_done = 1;
     for (int col = 1; col <= s->num_colors; col++)
         if (!s->done[col]) { all_done = 0; break; }
 
     if (all_done) {
-        /* Only record solutions that leave at least one cell empty */
         if (s->empty_count > 0) {
             g_nsols++;
             if (g_nsols == 1)
@@ -435,7 +361,6 @@ static void backtrack_nofill(State *s)
         return;
     }
 
-    /* Per-color reachability (no global connectivity check) */
     for (int col = 1; col <= s->num_colors; col++) {
         if (s->done[col]) continue;
         if (!can_reach(s, col)) return;
@@ -449,7 +374,7 @@ static void backtrack_nofill(State *s)
 
     for (int d = 0; d < 4; d++) {
         int nr = fr + DR[d], nc = fc + DC[d];
-        if (nr < 0 || nr >= s->size || nc < 0 || nc >= s->size) continue;
+        if (nr < 0 || nr >= s->rows || nc < 0 || nc >= s->cols) continue;
 
         if (nr == gr && nc == gc) {
             s->done[col]    = 1;
@@ -463,7 +388,6 @@ static void backtrack_nofill(State *s)
             s->front_c[col] = fc;
 
         } else if (s->filled[nr][nc] == 0) {
-            /* No 2×2 check here — detect any shortcut, even ugly ones */
             s->filled[nr][nc] = col;
             s->front_r[col]   = nr;
             s->front_c[col]   = nc;
@@ -481,7 +405,7 @@ static void backtrack_nofill(State *s)
 
 /* ── Public interface ──────────────────────────────────────────────────── */
 
-int solve_puzzle(const Puzzle *p, int out[MAX_SIZE][MAX_SIZE])
+int solve_puzzle(const Puzzle *p, int out[MAX_ROWS][MAX_COLS])
 {
     int n = run_solver(p, 1);
     if (n > 0) {
@@ -498,12 +422,13 @@ int count_solutions(const Puzzle *p, int max_count)
 
 int validate_puzzle(const Puzzle *p)
 {
-    if (!p || p->size < 2 || p->size > MAX_SIZE)          return 0;
-    if (p->num_colors < 2 || p->num_colors > MAX_COLORS)  return 0;
+    if (!p || p->rows < 2 || p->rows > MAX_ROWS) return 0;
+    if (p->cols < 2 || p->cols > MAX_COLS)       return 0;
+    if (p->num_colors < 2 || p->num_colors > MAX_COLORS) return 0;
 
     int ep_count[MAX_COLORS + 1] = {0};
-    for (int r = 0; r < p->size; r++) {
-        for (int c = 0; c < p->size; c++) {
+    for (int r = 0; r < p->rows; r++) {
+        for (int c = 0; c < p->cols; c++) {
             int col = p->grid[r][c];
             if (col < 0 || col > p->num_colors) return 0;
             if (col > 0) ep_count[col]++;
@@ -519,12 +444,13 @@ int has_unfilled_solution(const Puzzle *p)
 {
     State s;
     memset(&s, 0, sizeof(s));
-    s.size       = p->size;
+    s.rows       = p->rows;
+    s.cols       = p->cols;
     s.num_colors = p->num_colors;
 
     int empty = 0;
-    for (int r = 0; r < p->size; r++) {
-        for (int c = 0; c < p->size; c++) {
+    for (int r = 0; r < p->rows; r++) {
+        for (int c = 0; c < p->cols; c++) {
             s.filled[r][c] = p->grid[r][c];
             if (p->grid[r][c] == 0) empty++;
         }
@@ -532,8 +458,8 @@ int has_unfilled_solution(const Puzzle *p)
     s.empty_count = empty;
 
     int ep_found[MAX_COLORS + 1] = {0};
-    for (int r = 0; r < p->size; r++) {
-        for (int c = 0; c < p->size; c++) {
+    for (int r = 0; r < p->rows; r++) {
+        for (int c = 0; c < p->cols; c++) {
             int col = p->grid[r][c];
             if (!col) continue;
             if (ep_found[col] == 0) {
